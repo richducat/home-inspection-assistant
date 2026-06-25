@@ -1,0 +1,100 @@
+import type { InspectionReport, ReportReadiness, StatePack } from "./types";
+
+export function buildReportSummary(
+  inspection: InspectionReport,
+  statePack: StatePack,
+  readiness: ReportReadiness
+): string {
+  const reviewedSuggestions = inspection.aiSuggestions.length - readiness.unreviewedSuggestions;
+
+  return [
+    `${inspection.property.address}, ${inspection.property.city}, ${inspection.property.state}`,
+    `State pack: ${statePack.name} ${statePack.version}`,
+    `Inspector: ${inspection.inspector.name} (${inspection.inspector.license})`,
+    `Completion: ${readiness.completionPercent}%`,
+    `Findings approved: ${readiness.approvedFindings}`,
+    `AI suggestions reviewed: ${reviewedSuggestions}/${inspection.aiSuggestions.length}`,
+    readiness.ready
+      ? "Status: Ready for final inspector export"
+      : "Status: Inspector review required before export"
+  ].join("\n");
+}
+
+export function buildPrintableReportHtml(
+  inspection: InspectionReport,
+  statePack: StatePack,
+  readiness: ReportReadiness
+): string {
+  const findings = inspection.findings
+    .map(
+      (finding) => `
+        <section>
+          <h3>${escapeHtml(finding.title)}</h3>
+          <p><strong>Severity:</strong> ${escapeHtml(finding.severity)}</p>
+          <p>${escapeHtml(finding.narrative)}</p>
+          <p><strong>Recommendation:</strong> ${escapeHtml(finding.recommendation)}</p>
+        </section>
+      `
+    )
+    .join("");
+
+  const photos = inspection.photos
+    .map(
+      (photo) => `
+        <figure>
+          <img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.label)}" />
+          <figcaption>${escapeHtml(photo.label)} - ${escapeHtml(photo.location)}</figcaption>
+        </figure>
+      `
+    )
+    .join("");
+
+  return `
+    <!doctype html>
+    <html>
+      <head>
+        <title>Inspection Report - ${escapeHtml(inspection.property.address)}</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #172126; margin: 32px; line-height: 1.45; }
+          h1, h2, h3 { margin: 0 0 10px; }
+          header, section { border-bottom: 1px solid #d7dee2; padding: 0 0 18px; margin: 0 0 18px; }
+          figure { display: inline-block; width: 45%; margin: 0 16px 20px 0; vertical-align: top; }
+          img { width: 100%; border-radius: 6px; }
+          figcaption { font-size: 12px; color: #59686f; margin-top: 6px; }
+          .status { padding: 8px 10px; border-radius: 6px; background: ${readiness.ready ? "#e1f6ec" : "#fff4d8"}; }
+        </style>
+      </head>
+      <body>
+        <header>
+          <h1>Home Inspection Report Draft</h1>
+          <p>${escapeHtml(inspection.property.address)}, ${escapeHtml(inspection.property.city)}, ${escapeHtml(inspection.property.state)} ${escapeHtml(inspection.property.postalCode)}</p>
+          <p>Inspector: ${escapeHtml(inspection.inspector.name)} - ${escapeHtml(inspection.inspector.license)}</p>
+          <p>State pack: ${escapeHtml(statePack.name)} ${escapeHtml(statePack.version)}</p>
+          <p class="status">${readiness.ready ? "Ready for inspector final export" : "Inspector review required before final export"}</p>
+        </header>
+        <section>
+          <h2>Findings</h2>
+          ${findings || "<p>No approved findings yet.</p>"}
+        </section>
+        <section>
+          <h2>Photo Evidence</h2>
+          ${photos}
+        </section>
+        <section>
+          <h2>Compliance Notes</h2>
+          <ul>${statePack.disclaimers.map((disclaimer) => `<li>${escapeHtml(disclaimer)}</li>`).join("")}</ul>
+        </section>
+      </body>
+    </html>
+  `;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+

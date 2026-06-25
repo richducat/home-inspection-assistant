@@ -2,6 +2,7 @@
 
 ## Phase 1: Product Foundation
 
+- Status: initial web/PWA app foundation implemented.
 - Create standalone iOS app shell and backend API.
 - Define inspection, photo, finding, report, inspector, and state-pack models.
 - Implement private photo upload and retrieval with signed URLs.
@@ -9,6 +10,7 @@
 
 ## Phase 2: Compliance Packs
 
+- Status: versioned pack model implemented; Florida starter pack still requires licensed/compliance review before production use.
 - Implement versioned state packs.
 - Ship Florida as the first state pack.
 - Support required sections, form fields, inspector/license fields, disclaimers, and report export rules.
@@ -16,19 +18,21 @@
 
 ## Phase 3: AI Assistive Drafting
 
+- Status: local assistive draft queue and inspector review gates implemented; provider-backed AI service remains a later backend step.
 - Add photo classification and finding draft generation.
 - Require inspector review for every AI-generated field.
 - Store source photo IDs, prompt/model metadata, confidence, inspector override state, and approval timestamp.
 
 ## Phase 4: Report Export
 
+- Status: printable report preview implemented; generated PDF storage remains a backend step.
 - Generate PDF reports with photos, findings, property data, inspector data, signatures, and audit trail.
 - Preserve final report snapshots for reproducibility.
 - Add incomplete-report blocking rules.
 
 ## Phase 5: Release Readiness
 
+- Status: typecheck, unit tests, production build, browser screenshots, and UI smoke test are part of the current verification routine.
 - Device QA for capture, upload, offline/retry behavior, AI draft review, and PDF output.
 - Licensed-inspector review of report language and state-pack output.
 - Separate App Store/TestFlight setup from CadetCatch.
-
