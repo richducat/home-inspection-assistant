@@ -6,6 +6,7 @@ This project must remain operationally isolated from CadetCatch.
 
 - GitHub repository: `richducat/home-inspection-assistant`
 - Local path: `/Users/richardducat/GITHUB/home-inspection-assistant`
+- Repository visibility: public, so GitHub Pages can serve the standalone app. Do not commit secrets, customer data, inspection records, or CadetCatch material.
 - App bundle ID: choose a new identifier, for example `co.eb28.homeinspectionassistant`
 - Backend API: new service and hostname
 - Object storage: new private bucket/container
@@ -38,4 +39,3 @@ Any future code import from CadetCatch requires a dedicated migration commit wit
 - copied files listed explicitly
 - changes made during adaptation
 - confirmation that no secrets, endpoints, or release artifacts were copied
-
