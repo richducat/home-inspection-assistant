@@ -5,10 +5,12 @@ import {
   Check,
   CheckCircle2,
   ClipboardList,
+  FileDown,
   Download,
   FileCheck2,
   Home,
   ImagePlus,
+  PenLine,
   Plus,
   RotateCcw,
   Save,
@@ -35,9 +37,12 @@ import {
   markSystemComplete,
   updateSuggestionState
 } from "./domain/inspectionLogic";
-import { buildReportSummary } from "./domain/report";
+import { buildPrintableReportHtml, buildReportSummary } from "./domain/report";
 
 const STORAGE_KEY = "home-inspection-assistant:v2";
+
+type NavTarget = "workspace" | "photos" | "reports" | "compliance";
+type InspectionField = "inspectionDate" | "scope" | "signatureName";
 
 const severityLabels: Record<Severity, string> = {
   maintenance: "Maintenance",
@@ -60,6 +65,8 @@ export function App() {
   const [selectedPackId, setSelectedPackId] = useState(inspection.statePackId);
   const [findingDraft, setFindingDraft] = useState(blankFinding);
   const [reportOpen, setReportOpen] = useState(false);
+  const [complianceOpen, setComplianceOpen] = useState(false);
+  const [activeNav, setActiveNav] = useState<NavTarget>("workspace");
   const [lastSavedAt, setLastSavedAt] = useState(() => new Date().toLocaleTimeString());
 
   const statePack = useMemo(
@@ -103,6 +110,25 @@ export function App() {
     }));
     setActiveSystemId(pack.systems[0]?.id ?? "roof");
     setSelectedPhotoId(inspection.photos[0]?.id ?? "");
+  }
+
+  function handleNavigate(target: NavTarget) {
+    setActiveNav(target);
+
+    if (target === "reports") {
+      setReportOpen(true);
+      return;
+    }
+
+    if (target === "compliance") {
+      setComplianceOpen(true);
+      return;
+    }
+
+    const sectionId = target === "photos" ? "photo-evidence-panel" : "inspection-workspace";
+    window.requestAnimationFrame(() => {
+      document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   function handleSelectSystem(systemId: string) {
@@ -225,13 +251,36 @@ export function App() {
     }));
   }
 
+  function handlePhotoChange(photoId: string, patch: Pick<PhotoEvidence, "label" | "location">) {
+    setInspection((current) => ({
+      ...current,
+      status: current.status === "finalized" ? "in_review" : current.status,
+      signedAt: current.status === "finalized" ? undefined : current.signedAt,
+      exportedAt: current.status === "finalized" ? undefined : current.exportedAt,
+      photos: current.photos.map((photo) => (photo.id === photoId ? { ...photo, ...patch } : photo))
+    }));
+  }
+
   function handleFieldChange(scope: "property" | "inspector", field: string, value: string) {
     setInspection((current) => ({
       ...current,
+      status: current.status === "finalized" ? "in_review" : current.status,
+      signedAt: current.status === "finalized" ? undefined : current.signedAt,
+      exportedAt: current.status === "finalized" ? undefined : current.exportedAt,
       [scope]: {
         ...current[scope],
         [field]: value
       }
+    }));
+  }
+
+  function handleInspectionFieldChange(field: InspectionField, value: string) {
+    setInspection((current) => ({
+      ...current,
+      status: current.status === "finalized" ? "in_review" : current.status,
+      signedAt: current.status === "finalized" ? undefined : current.signedAt,
+      exportedAt: current.status === "finalized" ? undefined : current.exportedAt,
+      [field]: value
     }));
   }
 
@@ -268,6 +317,35 @@ export function App() {
     URL.revokeObjectURL(url);
   }
 
+  function handleDownloadReportHtml() {
+    const html = buildPrintableReportHtml(inspection, statePack, readiness);
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${inspection.property.address || "inspection"}-report.html`
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleFinalizeInspection() {
+    if (!readiness.ready || !inspection.signatureName?.trim()) {
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    setInspection((current) => ({
+      ...current,
+      status: "finalized",
+      signedAt: timestamp,
+      exportedAt: timestamp
+    }));
+    setReportOpen(true);
+  }
+
   return (
     <main className="app-shell">
       <Sidebar
@@ -277,6 +355,8 @@ export function App() {
         lastSavedAt={lastSavedAt}
         onNewInspection={handleNewInspection}
         onReset={handleReset}
+        activeNav={activeNav}
+        onNavigate={handleNavigate}
       />
       <section className="workspace">
         <Header
@@ -285,11 +365,14 @@ export function App() {
           onExport={() => setReportOpen(true)}
           onDownloadJson={handleDownloadJson}
         />
-        <section className="edit-band" aria-label="Inspection setup">
+        <section className="edit-band" id="inspection-workspace" aria-label="Inspection setup">
           <ProfileEditor
+            inspectionDate={inspection.inspectionDate}
+            scope={inspection.scope}
             property={inspection.property}
             inspector={inspection.inspector}
             onFieldChange={handleFieldChange}
+            onInspectionFieldChange={handleInspectionFieldChange}
           />
         </section>
         <div className="workgrid">
@@ -307,11 +390,15 @@ export function App() {
             selectedPhoto={selectedPhoto}
             onSelectPhoto={setSelectedPhotoId}
             onAddPhoto={handleAddPhoto}
+            onUpdatePhoto={handlePhotoChange}
             onGenerateDraft={handleGenerateDraft}
           />
           <ReviewPanel
             statePackName={statePack.name}
             readiness={readiness}
+            inspectionStatus={inspection.status}
+            signedAt={inspection.signedAt}
+            signatureName={inspection.signatureName ?? ""}
             suggestions={activeSuggestions}
             findings={activeFindings}
             findingDraft={findingDraft}
@@ -320,6 +407,8 @@ export function App() {
             onSuggestionAction={handleSuggestionAction}
             onAddFinding={handleAddFinding}
             onDeleteFinding={handleDeleteFinding}
+            onSignatureNameChange={(value) => handleInspectionFieldChange("signatureName", value)}
+            onFinalize={handleFinalizeInspection}
           />
         </div>
       </section>
@@ -329,10 +418,16 @@ export function App() {
           inspection={inspection}
           readiness={readiness}
           reportSummary={reportSummary}
+          statePack={statePack}
           onClose={() => setReportOpen(false)}
           onPrint={() => window.print()}
           onDownloadJson={handleDownloadJson}
+          onDownloadReportHtml={handleDownloadReportHtml}
         />
+      )}
+
+      {complianceOpen && (
+        <ComplianceDrawer statePack={statePack} onClose={() => setComplianceOpen(false)} />
       )}
     </main>
   );
@@ -344,7 +439,9 @@ function Sidebar({
   completionPercent,
   lastSavedAt,
   onNewInspection,
-  onReset
+  onReset,
+  activeNav,
+  onNavigate
 }: {
   selectedPackId: string;
   onPackChange: (packId: string) => void;
@@ -352,6 +449,8 @@ function Sidebar({
   lastSavedAt: string;
   onNewInspection: () => void;
   onReset: () => void;
+  activeNav: NavTarget;
+  onNavigate: (target: NavTarget) => void;
 }) {
   return (
     <aside className="sidebar">
@@ -366,19 +465,35 @@ function Sidebar({
       </div>
 
       <nav className="nav-stack" aria-label="Primary">
-        <button className="nav-item active" type="button">
+        <button
+          className={activeNav === "workspace" ? "nav-item active" : "nav-item"}
+          type="button"
+          onClick={() => onNavigate("workspace")}
+        >
           <ClipboardList size={17} />
           Inspection Workspace
         </button>
-        <button className="nav-item" type="button">
+        <button
+          className={activeNav === "photos" ? "nav-item active" : "nav-item"}
+          type="button"
+          onClick={() => onNavigate("photos")}
+        >
           <ImagePlus size={17} />
           Photo Evidence
         </button>
-        <button className="nav-item" type="button">
+        <button
+          className={activeNav === "reports" ? "nav-item active" : "nav-item"}
+          type="button"
+          onClick={() => onNavigate("reports")}
+        >
           <FileCheck2 size={17} />
           Report Exports
         </button>
-        <button className="nav-item" type="button">
+        <button
+          className={activeNav === "compliance" ? "nav-item active" : "nav-item"}
+          type="button"
+          onClick={() => onNavigate("compliance")}
+        >
           <ShieldCheck size={17} />
           Compliance Packs
         </button>
@@ -468,16 +583,30 @@ function Header({
 }
 
 function ProfileEditor({
+  inspectionDate,
+  scope,
   property,
   inspector,
-  onFieldChange
+  onFieldChange,
+  onInspectionFieldChange
 }: {
+  inspectionDate: string;
+  scope: string;
   property: PropertyProfile;
   inspector: InspectionReport["inspector"];
   onFieldChange: (scope: "property" | "inspector", field: string, value: string) => void;
+  onInspectionFieldChange: (field: InspectionField, value: string) => void;
 }) {
   return (
     <div className="profile-grid">
+      <label>
+        Inspection date
+        <input
+          type="date"
+          value={inspectionDate}
+          onChange={(event) => onInspectionFieldChange("inspectionDate", event.target.value)}
+        />
+      </label>
       <label>
         Property address
         <input
@@ -490,11 +619,44 @@ function ProfileEditor({
         <input value={property.city} onChange={(event) => onFieldChange("property", "city", event.target.value)} />
       </label>
       <label>
+        State
+        <input
+          value={property.state}
+          onChange={(event) => onFieldChange("property", "state", event.target.value.toUpperCase())}
+        />
+      </label>
+      <label>
         ZIP
         <input
           value={property.postalCode}
           onChange={(event) => onFieldChange("property", "postalCode", event.target.value)}
         />
+      </label>
+      <label>
+        Year built
+        <input
+          value={property.yearBuilt}
+          onChange={(event) => onFieldChange("property", "yearBuilt", event.target.value)}
+        />
+      </label>
+      <label>
+        Sq ft
+        <input
+          value={property.squareFeet}
+          onChange={(event) => onFieldChange("property", "squareFeet", event.target.value)}
+        />
+      </label>
+      <label>
+        Occupancy
+        <select
+          aria-label="Occupancy"
+          value={property.occupancy}
+          onChange={(event) => onFieldChange("property", "occupancy", event.target.value)}
+        >
+          <option value="occupied">Occupied</option>
+          <option value="vacant">Vacant</option>
+          <option value="unknown">Unknown</option>
+        </select>
       </label>
       <label>
         Inspector
@@ -504,10 +666,33 @@ function ProfileEditor({
         />
       </label>
       <label>
+        Company
+        <input
+          value={inspector.company}
+          onChange={(event) => onFieldChange("inspector", "company", event.target.value)}
+        />
+      </label>
+      <label>
         License
         <input
           value={inspector.license}
           onChange={(event) => onFieldChange("inspector", "license", event.target.value)}
+        />
+      </label>
+      <label>
+        Email
+        <input
+          type="email"
+          value={inspector.email}
+          onChange={(event) => onFieldChange("inspector", "email", event.target.value)}
+        />
+      </label>
+      <label className="wide-field">
+        Report scope
+        <textarea
+          aria-label="Report scope"
+          value={scope}
+          onChange={(event) => onInspectionFieldChange("scope", event.target.value)}
         />
       </label>
     </div>
@@ -586,6 +771,7 @@ function PhotoWorkspace({
   selectedPhoto,
   onSelectPhoto,
   onAddPhoto,
+  onUpdatePhoto,
   onGenerateDraft
 }: {
   systemLabel: string;
@@ -593,10 +779,11 @@ function PhotoWorkspace({
   selectedPhoto?: PhotoEvidence;
   onSelectPhoto: (photoId: string) => void;
   onAddPhoto: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onUpdatePhoto: (photoId: string, patch: Pick<PhotoEvidence, "label" | "location">) => void;
   onGenerateDraft: () => void;
 }) {
   return (
-    <section className="panel photo-panel">
+    <section className="panel photo-panel" id="photo-evidence-panel">
       <div className="panel-header">
         <div>
           <span className="panel-kicker">{systemLabel}</span>
@@ -610,7 +797,7 @@ function PhotoWorkspace({
           <label className="ghost-button file-button">
             <ImagePlus size={15} />
             Add photo
-            <input type="file" accept="image/*" onChange={onAddPhoto} />
+            <input type="file" accept="image/*" capture="environment" onChange={onAddPhoto} />
           </label>
         </div>
       </div>
@@ -619,8 +806,26 @@ function PhotoWorkspace({
         <div className="selected-photo">
           <img src={selectedPhoto.url} alt={selectedPhoto.label} />
           <div>
-            <strong>{selectedPhoto.label}</strong>
-            <span>{selectedPhoto.location}</span>
+            <div className="photo-meta-form">
+              <label>
+                Photo label
+                <input
+                  value={selectedPhoto.label}
+                  onChange={(event) =>
+                    onUpdatePhoto(selectedPhoto.id, { label: event.target.value, location: selectedPhoto.location })
+                  }
+                />
+              </label>
+              <label>
+                Location
+                <input
+                  value={selectedPhoto.location}
+                  onChange={(event) =>
+                    onUpdatePhoto(selectedPhoto.id, { label: selectedPhoto.label, location: event.target.value })
+                  }
+                />
+              </label>
+            </div>
             <div className="tag-row">
               {selectedPhoto.tags.map((tag) => (
                 <span key={tag}>{tag}</span>
@@ -658,6 +863,9 @@ function PhotoWorkspace({
 function ReviewPanel({
   statePackName,
   readiness,
+  inspectionStatus,
+  signedAt,
+  signatureName,
   suggestions,
   findings,
   findingDraft,
@@ -665,10 +873,15 @@ function ReviewPanel({
   reportSummary,
   onSuggestionAction,
   onAddFinding,
-  onDeleteFinding
+  onDeleteFinding,
+  onSignatureNameChange,
+  onFinalize
 }: {
   statePackName: string;
   readiness: ReturnType<typeof calculateReportReadiness>;
+  inspectionStatus: InspectionReport["status"];
+  signedAt?: string;
+  signatureName: string;
   suggestions: AiSuggestion[];
   findings: InspectionReport["findings"];
   findingDraft: typeof blankFinding;
@@ -677,9 +890,14 @@ function ReviewPanel({
   onSuggestionAction: (suggestion: AiSuggestion, action: "approve" | "edit" | "reject") => void;
   onAddFinding: () => void;
   onDeleteFinding: (findingId: string) => void;
+  onSignatureNameChange: (value: string) => void;
+  onFinalize: () => void;
 }) {
+  const finalized = inspectionStatus === "finalized";
+  const canFinalize = readiness.ready && signatureName.trim().length > 0;
+
   return (
-    <section className="panel review-panel">
+    <section className="panel review-panel" id="review-panel">
       <div className="panel-header">
         <div>
           <span className="panel-kicker">{statePackName}</span>
@@ -796,6 +1014,26 @@ function ReviewPanel({
         <pre>{reportSummary}</pre>
       </details>
 
+      <div className={finalized ? "signoff-box finalized" : "signoff-box"}>
+        <div>
+          <h3>Inspector signoff</h3>
+          <p>
+            {finalized && signedAt
+              ? `Finalized by ${signatureName} at ${new Date(signedAt).toLocaleString()}`
+              : "Type the inspector name after review gates are clear."}
+          </p>
+        </div>
+        <input
+          placeholder="Inspector signature name"
+          value={signatureName}
+          onChange={(event) => onSignatureNameChange(event.target.value)}
+        />
+        <button className="primary-button" type="button" disabled={!canFinalize} onClick={onFinalize}>
+          <PenLine size={15} />
+          {finalized ? "Finalized" : "Finalize inspection"}
+        </button>
+      </div>
+
       {!readiness.ready && (
         <div className="export-blocker">
           <XCircle size={16} />
@@ -810,16 +1048,20 @@ function ReportDrawer({
   inspection,
   readiness,
   reportSummary,
+  statePack,
   onClose,
   onPrint,
-  onDownloadJson
+  onDownloadJson,
+  onDownloadReportHtml
 }: {
   inspection: InspectionReport;
   readiness: ReturnType<typeof calculateReportReadiness>;
   reportSummary: string;
+  statePack: typeof statePacks[number];
   onClose: () => void;
   onPrint: () => void;
   onDownloadJson: () => void;
+  onDownloadReportHtml: () => void;
 }) {
   return (
     <aside className="report-drawer" aria-label="Report preview">
@@ -837,8 +1079,30 @@ function ReportDrawer({
           {readiness.ready ? "Ready for inspector export" : "Inspector review required before final export"}
         </div>
         <pre className="report-pre">{reportSummary}</pre>
+        <section className="report-section report-facts">
+          <h3>Inspection details</h3>
+          <dl>
+            <div>
+              <dt>Date</dt>
+              <dd>{inspection.inspectionDate || "Not set"}</dd>
+            </div>
+            <div>
+              <dt>Scope</dt>
+              <dd>{inspection.scope || "Not set"}</dd>
+            </div>
+            <div>
+              <dt>Inspector</dt>
+              <dd>{inspection.inspector.name || "Not set"}</dd>
+            </div>
+            <div>
+              <dt>Company</dt>
+              <dd>{inspection.inspector.company || "Not set"}</dd>
+            </div>
+          </dl>
+        </section>
         <section className="report-section">
           <h3>Findings</h3>
+          {inspection.findings.length === 0 && <p>No approved findings yet.</p>}
           {inspection.findings.map((finding) => (
             <article key={finding.id}>
               <strong>{finding.title}</strong>
@@ -850,6 +1114,7 @@ function ReportDrawer({
         <section className="report-section">
           <h3>Photo evidence</h3>
           <div className="report-photo-grid">
+            {inspection.photos.length === 0 && <p>No photo evidence attached yet.</p>}
             {inspection.photos.map((photo) => (
               <figure key={photo.id}>
                 <img src={photo.url} alt={photo.label} />
@@ -858,10 +1123,39 @@ function ReportDrawer({
             ))}
           </div>
         </section>
+        <section className="report-section">
+          <h3>Compliance notes</h3>
+          <ul className="compact-list">
+            {statePack.disclaimers.map((disclaimer) => (
+              <li key={disclaimer}>{disclaimer}</li>
+            ))}
+          </ul>
+        </section>
+        <section className="report-section">
+          <h3>Audit trail</h3>
+          <dl className="audit-list">
+            <div>
+              <dt>Inspection ID</dt>
+              <dd>{inspection.id}</dd>
+            </div>
+            <div>
+              <dt>Signed at</dt>
+              <dd>{inspection.signedAt ? new Date(inspection.signedAt).toLocaleString() : "Pending"}</dd>
+            </div>
+            <div>
+              <dt>Exported at</dt>
+              <dd>{inspection.exportedAt ? new Date(inspection.exportedAt).toLocaleString() : "Pending"}</dd>
+            </div>
+          </dl>
+        </section>
         <div className="report-actions">
           <button className="ghost-button" type="button" onClick={onDownloadJson}>
             <Download size={15} />
             Download record
+          </button>
+          <button className="ghost-button" type="button" onClick={onDownloadReportHtml}>
+            <FileDown size={15} />
+            Download report
           </button>
           <button className="primary-button" type="button" onClick={onPrint}>
             <FileCheck2 size={15} />
@@ -873,16 +1167,70 @@ function ReportDrawer({
   );
 }
 
+function ComplianceDrawer({
+  statePack,
+  onClose
+}: {
+  statePack: typeof statePacks[number];
+  onClose: () => void;
+}) {
+  return (
+    <aside className="report-drawer" aria-label="Compliance pack details">
+      <div className="report-panel">
+        <div className="report-header">
+          <div>
+            <span className="panel-kicker">Compliance pack</span>
+            <h2>{statePack.name}</h2>
+          </div>
+          <button className="suggestion-footer-button" type="button" onClick={onClose} aria-label="Close compliance pack">
+            <X size={18} />
+          </button>
+        </div>
+        <div className={statePack.status === "production_review" ? "report-state review" : "report-state"}>
+          {statePack.state} · {statePack.version} · Effective {statePack.effectiveDate}
+        </div>
+        <section className="report-section">
+          <h3>Forms and required fields</h3>
+          <div className="compliance-list">
+            {statePack.forms.map((form) => (
+              <article key={form.id}>
+                <strong>{form.title}</strong>
+                <p>{form.description}</p>
+                <ul className="field-list">
+                  {form.fields.map((field) => (
+                    <li key={field.id}>
+                      <span>{field.label}</span>
+                      <small>{field.required ? "Required" : "Optional"} · {field.type}</small>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+        </section>
+        <section className="report-section">
+          <h3>Pack disclaimers</h3>
+          <ul className="compact-list">
+            {statePack.disclaimers.map((disclaimer) => (
+              <li key={disclaimer}>{disclaimer}</li>
+            ))}
+          </ul>
+        </section>
+      </div>
+    </aside>
+  );
+}
+
 function loadSavedInspection(): InspectionReport {
   const saved = window.localStorage.getItem(STORAGE_KEY);
   if (!saved) {
-    return cloneInspection(seedInspection);
+    return normalizeInspection(seedInspection);
   }
 
   try {
-    return JSON.parse(saved) as InspectionReport;
+    return normalizeInspection(JSON.parse(saved) as InspectionReport);
   } catch {
-    return cloneInspection(seedInspection);
+    return normalizeInspection(seedInspection);
   }
 }
 
@@ -890,11 +1238,26 @@ function cloneInspection(inspection: InspectionReport): InspectionReport {
   return JSON.parse(JSON.stringify(inspection)) as InspectionReport;
 }
 
+function normalizeInspection(inspection: InspectionReport): InspectionReport {
+  const cloned = cloneInspection(inspection);
+  return {
+    ...cloned,
+    inspectionDate: cloned.inspectionDate || new Date().toISOString().slice(0, 10),
+    scope:
+      cloned.scope ||
+      "General visual home inspection of readily accessible systems and components with photo evidence and inspector review.",
+    signatureName: cloned.signatureName ?? ""
+  };
+}
+
 function createBlankInspection(systems: InspectionSystem[], statePackId: string): InspectionReport {
   return {
     id: `inspection-${Date.now()}`,
     statePackId,
     status: "draft",
+    inspectionDate: new Date().toISOString().slice(0, 10),
+    scope:
+      "General visual home inspection of readily accessible systems and components with photo evidence and inspector review.",
     property: {
       address: "",
       city: "",
@@ -913,7 +1276,8 @@ function createBlankInspection(systems: InspectionSystem[], statePackId: string)
     systems: systems.map((system) => ({ systemId: system.id, status: "not_started", completedCheckpoints: [] })),
     photos: [],
     findings: [],
-    aiSuggestions: []
+    aiSuggestions: [],
+    signatureName: ""
   };
 }
 

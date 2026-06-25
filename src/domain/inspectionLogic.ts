@@ -22,6 +22,8 @@ export function calculateReportReadiness(
   const missingRequiredFields = [
     ["Property address", inspection.property.address],
     ["Inspection state", inspection.property.state],
+    ["Inspection date", inspection.inspectionDate],
+    ["Report scope", inspection.scope],
     ["Inspector name", inspection.inspector.name],
     ["Inspector license", inspection.inspector.license]
   ]
@@ -162,4 +164,3 @@ export function markSystemComplete(
     )
   };
 }
-

@@ -9,11 +9,16 @@ export function buildReportSummary(
 
   return [
     `${inspection.property.address}, ${inspection.property.city}, ${inspection.property.state}`,
+    `Inspection date: ${inspection.inspectionDate || "Not set"}`,
     `State pack: ${statePack.name} ${statePack.version}`,
     `Inspector: ${inspection.inspector.name} (${inspection.inspector.license})`,
+    `Scope: ${inspection.scope || "Not set"}`,
     `Completion: ${readiness.completionPercent}%`,
     `Findings approved: ${readiness.approvedFindings}`,
     `AI suggestions reviewed: ${reviewedSuggestions}/${inspection.aiSuggestions.length}`,
+    inspection.signedAt
+      ? `Inspector signoff: ${inspection.signatureName || inspection.inspector.name} at ${formatDateTime(inspection.signedAt)}`
+      : "Inspector signoff: Pending",
     readiness.ready
       ? "Status: Ready for final inspector export"
       : "Status: Inspector review required before export"
@@ -68,8 +73,12 @@ export function buildPrintableReportHtml(
         <header>
           <h1>Home Inspection Report Draft</h1>
           <p>${escapeHtml(inspection.property.address)}, ${escapeHtml(inspection.property.city)}, ${escapeHtml(inspection.property.state)} ${escapeHtml(inspection.property.postalCode)}</p>
+          <p>Inspection date: ${escapeHtml(inspection.inspectionDate || "Not set")}</p>
           <p>Inspector: ${escapeHtml(inspection.inspector.name)} - ${escapeHtml(inspection.inspector.license)}</p>
+          <p>Company: ${escapeHtml(inspection.inspector.company || "Not set")} - ${escapeHtml(inspection.inspector.email || "No email")}</p>
           <p>State pack: ${escapeHtml(statePack.name)} ${escapeHtml(statePack.version)}</p>
+          <p>Scope: ${escapeHtml(inspection.scope || "Not set")}</p>
+          <p>Signoff: ${inspection.signedAt ? `${escapeHtml(inspection.signatureName || inspection.inspector.name)} at ${escapeHtml(formatDateTime(inspection.signedAt))}` : "Pending inspector finalization"}</p>
           <p class="status">${readiness.ready ? "Ready for inspector final export" : "Inspector review required before final export"}</p>
         </header>
         <section>
@@ -83,6 +92,12 @@ export function buildPrintableReportHtml(
         <section>
           <h2>Compliance Notes</h2>
           <ul>${statePack.disclaimers.map((disclaimer) => `<li>${escapeHtml(disclaimer)}</li>`).join("")}</ul>
+        </section>
+        <section>
+          <h2>Audit Trail</h2>
+          <p>Inspection ID: ${escapeHtml(inspection.id)}</p>
+          <p>Signed at: ${escapeHtml(inspection.signedAt ? formatDateTime(inspection.signedAt) : "Pending")}</p>
+          <p>Exported at: ${escapeHtml(inspection.exportedAt ? formatDateTime(inspection.exportedAt) : "Pending")}</p>
         </section>
       </body>
     </html>
@@ -98,3 +113,6 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleString();
+}

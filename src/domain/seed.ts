@@ -11,6 +11,9 @@ export const seedInspection: InspectionReport = {
   id: "inspection-viera-001",
   statePackId: "fl-2026-starter",
   status: "in_review",
+  inspectionDate: "2026-06-24",
+  scope:
+    "General visual home inspection of readily accessible systems and components with photo evidence, inspector review, and state-pack guardrails.",
   property: {
     address: "742 Palmetto Ridge Dr",
     city: "Viera",
@@ -26,6 +29,7 @@ export const seedInspection: InspectionReport = {
     license: "FL-HI-REVIEW",
     email: "inspections@eb28.co"
   },
+  signatureName: "",
   systems: getStatePack("fl-2026-starter").systems.map((system, index) => ({
     systemId: system.id,
     status: index < 3 ? "complete" : index < 5 ? "in_progress" : "not_started",

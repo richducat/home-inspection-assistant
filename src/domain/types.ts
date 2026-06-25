@@ -104,12 +104,15 @@ export interface InspectionReport {
   id: string;
   statePackId: string;
   status: InspectionStatus;
+  inspectionDate: string;
+  scope: string;
   property: PropertyProfile;
   inspector: InspectorProfile;
   systems: SystemProgress[];
   photos: PhotoEvidence[];
   findings: Finding[];
   aiSuggestions: AiSuggestion[];
+  signatureName?: string;
   signedAt?: string;
   exportedAt?: string;
 }
@@ -124,4 +127,3 @@ export interface ReportReadiness {
   safetyFindings: number;
   approvedFindings: number;
 }
-
