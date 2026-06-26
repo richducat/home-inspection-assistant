@@ -5,8 +5,10 @@ import {
   Check,
   CheckCircle2,
   ClipboardList,
+  Database,
   FileDown,
   Download,
+  ExternalLink,
   FileCheck2,
   Home,
   ImagePlus,
@@ -39,6 +41,13 @@ import {
   updateSuggestionState
 } from "./domain/inspectionLogic";
 import { buildPrintableReportHtml, buildReportSummary } from "./domain/report";
+import {
+  buildFourPointPdf,
+  buildWindMitigationPdf,
+  downloadOfficialForm,
+  type OfficialFormType
+} from "./domain/officialForms";
+import { applyResearchSuggestions, buildPropertyResearchLinks, researchProperty } from "./domain/propertyResearch";
 
 const STORAGE_KEY = "home-inspection-assistant:v2";
 
@@ -70,6 +79,9 @@ export function App() {
   const [activeNav, setActiveNav] = useState<NavTarget>("workspace");
   const [scanningPhotoId, setScanningPhotoId] = useState("");
   const [scanError, setScanError] = useState("");
+  const [officialFormStatus, setOfficialFormStatus] = useState("");
+  const [researchingProperty, setResearchingProperty] = useState(false);
+  const [propertyResearchStatus, setPropertyResearchStatus] = useState("");
   const [lastSavedAt, setLastSavedAt] = useState(() => new Date().toLocaleTimeString());
 
   const statePack = useMemo(
@@ -366,6 +378,63 @@ export function App() {
     URL.revokeObjectURL(url);
   }
 
+  async function handleDownloadOfficialForm(type: OfficialFormType) {
+    setOfficialFormStatus(type === "four-point" ? "Building official 4-Point PDF..." : "Building official Wind Mitigation PDF...");
+    try {
+      const exportedForm =
+        type === "four-point" ? await buildFourPointPdf(inspection) : await buildWindMitigationPdf(inspection);
+      downloadOfficialForm(exportedForm);
+      setOfficialFormStatus(
+        type === "four-point"
+          ? "Official 4-Point PDF generated from the supplied blank template."
+          : "Official Wind Mitigation PDF generated from the supplied blank template."
+      );
+    } catch {
+      setOfficialFormStatus("Official PDF export failed. Reopen the app and try again.");
+    }
+  }
+
+  async function handleResearchProperty() {
+    if (researchingProperty) {
+      return;
+    }
+
+    setResearchingProperty(true);
+    setPropertyResearchStatus("Checking public records and official documentation sources...");
+
+    try {
+      const packet = await researchProperty(inspection);
+      const appliedCount = packet.suggestions.filter((suggestion) => suggestion.applyable).length;
+
+      setInspection((current) => applyResearchSuggestions(current, packet));
+      setPropertyResearchStatus(
+        appliedCount > 0
+          ? `Public-record research complete. Autofilled ${appliedCount} sourced field${appliedCount === 1 ? "" : "s"}.`
+          : "Public-record research complete. No new autofill fields were found for this address."
+      );
+    } catch {
+      const failedPacket = {
+        status: "failed" as const,
+        searchedAt: new Date().toISOString(),
+        query: [
+          inspection.property.address,
+          inspection.property.city,
+          inspection.property.state,
+          inspection.property.postalCode
+        ]
+          .filter(Boolean)
+          .join(", "),
+        sources: buildPropertyResearchLinks(inspection.property),
+        suggestions: [],
+        notes: ["Public-record lookup failed in the browser. Use the official source links for manual verification."]
+      };
+      setInspection((current) => ({ ...current, researchPacket: failedPacket }));
+      setPropertyResearchStatus("Public-record lookup failed. Official manual source links are still available below.");
+    } finally {
+      setResearchingProperty(false);
+    }
+  }
+
   function handleFinalizeInspection() {
     if (!readiness.ready || !inspection.signatureName?.trim()) {
       return;
@@ -401,14 +470,22 @@ export function App() {
           onDownloadJson={handleDownloadJson}
         />
         <section className="edit-band" id="inspection-workspace" aria-label="Inspection setup">
-          <ProfileEditor
-            inspectionDate={inspection.inspectionDate}
-            scope={inspection.scope}
-            property={inspection.property}
-            inspector={inspection.inspector}
-            onFieldChange={handleFieldChange}
-            onInspectionFieldChange={handleInspectionFieldChange}
-          />
+          <div className="setup-stack">
+            <PropertyResearchPanel
+              inspection={inspection}
+              researching={researchingProperty}
+              statusText={propertyResearchStatus}
+              onResearch={handleResearchProperty}
+            />
+            <ProfileEditor
+              inspectionDate={inspection.inspectionDate}
+              scope={inspection.scope}
+              property={inspection.property}
+              inspector={inspection.inspector}
+              onFieldChange={handleFieldChange}
+              onInspectionFieldChange={handleInspectionFieldChange}
+            />
+          </div>
         </section>
         <div className="workgrid">
           <SystemChecklist
@@ -461,6 +538,9 @@ export function App() {
           onPrint={() => window.print()}
           onDownloadJson={handleDownloadJson}
           onDownloadReportHtml={handleDownloadReportHtml}
+          onDownloadFourPoint={() => handleDownloadOfficialForm("four-point")}
+          onDownloadWindMitigation={() => handleDownloadOfficialForm("wind-mitigation")}
+          officialFormStatus={officialFormStatus}
         />
       )}
 
@@ -620,6 +700,115 @@ function Header({
   );
 }
 
+function PropertyResearchPanel({
+  inspection,
+  researching,
+  statusText,
+  onResearch
+}: {
+  inspection: InspectionReport;
+  researching: boolean;
+  statusText: string;
+  onResearch: () => void;
+}) {
+  const packet = inspection.researchPacket;
+  const sources = packet?.sources ?? buildPropertyResearchLinks(inspection.property);
+  const verifiedSources = sources.filter((source) => source.status === "verified").length;
+  const blockedSources = sources.filter((source) => ["blocked", "failed"].includes(source.status)).length;
+  const sourceFacts = [
+    ["Owner", inspection.property.ownerName],
+    ["County", inspection.property.county || packet?.county],
+    ["Parcel", inspection.property.parcelId || packet?.parcelId],
+    ["Flood zone", inspection.property.floodZone || packet?.floodZone],
+    ["SFHA", inspection.property.sfha || packet?.sfha]
+  ];
+
+  return (
+    <section className="property-research-panel" aria-label="Public records research">
+      <div className="research-header">
+        <div>
+          <span className="panel-kicker">Public records</span>
+          <h2>Research + autofill</h2>
+        </div>
+        <button className="primary-button" type="button" disabled={researching} onClick={onResearch}>
+          <Database size={15} />
+          {researching ? "Researching..." : "Research + autofill"}
+        </button>
+      </div>
+
+      <div className="research-status-row">
+        <span className={`research-state ${packet?.status ?? "idle"}`}>{packet?.status ?? "idle"}</span>
+        <span>{verifiedSources} verified source{verifiedSources === 1 ? "" : "s"}</span>
+        <span>{blockedSources} source{blockedSources === 1 ? "" : "s"} need manual review</span>
+        {packet?.searchedAt && <span>Checked {new Date(packet.searchedAt).toLocaleString()}</span>}
+      </div>
+
+      {statusText && <p className="research-status-text">{statusText}</p>}
+
+      <dl className="research-facts">
+        {sourceFacts.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value || "Not populated"}</dd>
+          </div>
+        ))}
+      </dl>
+
+      {packet?.normalizedAddress && (
+        <p className="research-address">Matched address: {packet.normalizedAddress}</p>
+      )}
+
+      <div className="research-grid">
+        <div>
+          <h3>Autofill suggestions</h3>
+          <div className="research-suggestion-list">
+            {!packet?.suggestions.length && (
+              <p className="empty-state">Run research to pull available public-record fields.</p>
+            )}
+            {packet?.suggestions.map((suggestion) => (
+              <div className="research-suggestion" key={`${suggestion.fieldPath}-${suggestion.sourceId}`}>
+                <div>
+                  <strong>{suggestion.label}</strong>
+                  <span>{suggestion.sourceId.replace(/-/g, " ")}</span>
+                </div>
+                <p>{suggestion.value}</p>
+                <small>
+                  {suggestion.confidence} confidence
+                  {suggestion.currentValue ? ` · replaced "${suggestion.currentValue}"` : ""}
+                </small>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <h3>Official source links</h3>
+          <div className="source-list">
+            {sources.map((source) => (
+              <a href={source.url} target="_blank" rel="noreferrer" className="source-link" key={source.id}>
+                <span>
+                  <strong>{source.title}</strong>
+                  <small>{source.detail}</small>
+                </span>
+                <span className={`source-status ${source.status}`}>{source.status.replace("_", " ")}</span>
+                <ExternalLink size={14} />
+              </a>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {packet?.notes.length ? (
+        <ul className="research-notes">
+          {packet.notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
 function ProfileEditor({
   inspectionDate,
   scope,
@@ -697,6 +886,55 @@ function ProfileEditor({
         </select>
       </label>
       <label>
+        Owner
+        <input
+          value={property.ownerName ?? ""}
+          onChange={(event) => onFieldChange("property", "ownerName", event.target.value)}
+        />
+      </label>
+      <label>
+        County
+        <input
+          value={property.county ?? ""}
+          onChange={(event) => onFieldChange("property", "county", event.target.value)}
+        />
+      </label>
+      <label>
+        Parcel ID
+        <input
+          value={property.parcelId ?? ""}
+          onChange={(event) => onFieldChange("property", "parcelId", event.target.value)}
+        />
+      </label>
+      <label>
+        Tax account
+        <input
+          value={property.taxAccount ?? ""}
+          onChange={(event) => onFieldChange("property", "taxAccount", event.target.value)}
+        />
+      </label>
+      <label>
+        Flood zone
+        <input
+          value={property.floodZone ?? ""}
+          onChange={(event) => onFieldChange("property", "floodZone", event.target.value)}
+        />
+      </label>
+      <label>
+        SFHA
+        <input
+          value={property.sfha ?? ""}
+          onChange={(event) => onFieldChange("property", "sfha", event.target.value)}
+        />
+      </label>
+      <label>
+        Property use
+        <input
+          value={property.propertyUse ?? ""}
+          onChange={(event) => onFieldChange("property", "propertyUse", event.target.value)}
+        />
+      </label>
+      <label>
         Inspector
         <input
           value={inspector.name}
@@ -723,6 +961,14 @@ function ProfileEditor({
           type="email"
           value={inspector.email}
           onChange={(event) => onFieldChange("inspector", "email", event.target.value)}
+        />
+      </label>
+      <label className="wide-field">
+        Legal description
+        <textarea
+          aria-label="Legal description"
+          value={property.legalDescription ?? ""}
+          onChange={(event) => onFieldChange("property", "legalDescription", event.target.value)}
         />
       </label>
       <label className="wide-field">
@@ -1155,7 +1401,10 @@ function ReportDrawer({
   onClose,
   onPrint,
   onDownloadJson,
-  onDownloadReportHtml
+  onDownloadReportHtml,
+  onDownloadFourPoint,
+  onDownloadWindMitigation,
+  officialFormStatus
 }: {
   inspection: InspectionReport;
   readiness: ReturnType<typeof calculateReportReadiness>;
@@ -1165,6 +1414,9 @@ function ReportDrawer({
   onPrint: () => void;
   onDownloadJson: () => void;
   onDownloadReportHtml: () => void;
+  onDownloadFourPoint: () => void;
+  onDownloadWindMitigation: () => void;
+  officialFormStatus: string;
 }) {
   return (
     <aside className="report-drawer" aria-label="Report preview">
@@ -1200,6 +1452,22 @@ function ReportDrawer({
             <div>
               <dt>Company</dt>
               <dd>{inspection.inspector.company || "Not set"}</dd>
+            </div>
+            <div>
+              <dt>Owner</dt>
+              <dd>{inspection.property.ownerName || "Not populated"}</dd>
+            </div>
+            <div>
+              <dt>County</dt>
+              <dd>{inspection.property.county || "Not populated"}</dd>
+            </div>
+            <div>
+              <dt>Parcel</dt>
+              <dd>{inspection.property.parcelId || "Not populated"}</dd>
+            </div>
+            <div>
+              <dt>Flood zone</dt>
+              <dd>{inspection.property.floodZone || "Not populated"}</dd>
             </div>
           </dl>
         </section>
@@ -1247,12 +1515,57 @@ function ReportDrawer({
             ))}
         </section>
         <section className="report-section">
+          <h3>Public records research</h3>
+          <p>
+            Status: {inspection.researchPacket?.status ?? "Not run"}
+            {inspection.researchPacket?.normalizedAddress
+              ? ` · Matched ${inspection.researchPacket.normalizedAddress}`
+              : ""}
+          </p>
+          {inspection.property.legalDescription && (
+            <p>
+              <strong>Legal:</strong> {inspection.property.legalDescription}
+            </p>
+          )}
+          <div className="source-list compact">
+            {(inspection.researchPacket?.sources ?? buildPropertyResearchLinks(inspection.property)).map((source) => (
+              <a href={source.url} target="_blank" rel="noreferrer" className="source-link" key={source.id}>
+                <span>
+                  <strong>{source.title}</strong>
+                  <small>{source.detail}</small>
+                </span>
+                <span className={`source-status ${source.status}`}>{source.status.replace("_", " ")}</span>
+                <ExternalLink size={14} />
+              </a>
+            ))}
+          </div>
+        </section>
+        <section className="report-section">
           <h3>Compliance notes</h3>
           <ul className="compact-list">
             {statePack.disclaimers.map((disclaimer) => (
               <li key={disclaimer}>{disclaimer}</li>
             ))}
           </ul>
+        </section>
+        <section className="report-section official-form-section">
+          <h3>Official state/carrier forms</h3>
+          <p>
+            These exports use the supplied blank 4-Point 2025 PDF and OIR-B1-1802 Rev. 04/26 Wind
+            Mitigation PDF as the actual output templates. Fields the app does not capture yet are
+            left blank or marked for inspector verification instead of being guessed.
+          </p>
+          <div className="official-form-actions">
+            <button className="ghost-button" type="button" onClick={onDownloadFourPoint}>
+              <FileDown size={15} />
+              Download 4-Point PDF
+            </button>
+            <button className="ghost-button" type="button" onClick={onDownloadWindMitigation}>
+              <FileDown size={15} />
+              Download Wind Mitigation PDF
+            </button>
+          </div>
+          {officialFormStatus && <p className="official-form-status">{officialFormStatus}</p>}
         </section>
         <section className="report-section">
           <h3>Audit trail</h3>
@@ -1363,8 +1676,28 @@ function cloneInspection(inspection: InspectionReport): InspectionReport {
 
 function normalizeInspection(inspection: InspectionReport): InspectionReport {
   const cloned = cloneInspection(inspection);
+  const property = {
+    ...cloned.property,
+    address: cloned.property.address ?? "",
+    city: cloned.property.city ?? "",
+    state: cloned.property.state ?? "FL",
+    postalCode: cloned.property.postalCode ?? "",
+    yearBuilt: cloned.property.yearBuilt ?? "",
+    squareFeet: cloned.property.squareFeet ?? "",
+    occupancy: cloned.property.occupancy ?? "unknown",
+    ownerName: cloned.property.ownerName ?? "",
+    county: cloned.property.county ?? "",
+    parcelId: cloned.property.parcelId ?? "",
+    taxAccount: cloned.property.taxAccount ?? "",
+    legalDescription: cloned.property.legalDescription ?? "",
+    propertyUse: cloned.property.propertyUse ?? "",
+    floodZone: cloned.property.floodZone ?? "",
+    sfha: cloned.property.sfha ?? ""
+  };
+
   return {
     ...cloned,
+    property,
     inspectionDate: cloned.inspectionDate || new Date().toISOString().slice(0, 10),
     scope:
       cloned.scope ||
@@ -1388,7 +1721,15 @@ function createBlankInspection(systems: InspectionSystem[], statePackId: string)
       postalCode: "",
       yearBuilt: "",
       squareFeet: "",
-      occupancy: "unknown"
+      occupancy: "unknown",
+      ownerName: "",
+      county: "",
+      parcelId: "",
+      taxAccount: "",
+      legalDescription: "",
+      propertyUse: "",
+      floodZone: "",
+      sfha: ""
     },
     inspector: {
       name: "",

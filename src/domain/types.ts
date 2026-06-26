@@ -49,6 +49,14 @@ export interface PropertyProfile {
   yearBuilt: string;
   squareFeet: string;
   occupancy: "occupied" | "vacant" | "unknown";
+  ownerName?: string;
+  county?: string;
+  parcelId?: string;
+  taxAccount?: string;
+  legalDescription?: string;
+  propertyUse?: string;
+  floodZone?: string;
+  sfha?: string;
 }
 
 export interface InspectorProfile {
@@ -129,6 +137,55 @@ export interface SystemProgress {
   completedCheckpoints: string[];
 }
 
+export type PropertyResearchStatus = "idle" | "running" | "complete" | "partial" | "failed";
+
+export type PropertyResearchSourceStatus =
+  | "verified"
+  | "not_found"
+  | "link_only"
+  | "blocked"
+  | "failed"
+  | "skipped";
+
+export interface PropertyResearchSource {
+  id: string;
+  title: string;
+  url: string;
+  status: PropertyResearchSourceStatus;
+  detail: string;
+}
+
+export interface PropertyResearchSuggestion {
+  fieldPath: `property.${keyof PropertyProfile}`;
+  label: string;
+  value: string;
+  sourceId: string;
+  confidence: "high" | "medium" | "low";
+  applyable: boolean;
+  currentValue?: string;
+}
+
+export interface PropertyResearchPacket {
+  status: PropertyResearchStatus;
+  searchedAt: string;
+  query: string;
+  normalizedAddress?: string;
+  coordinates?: {
+    latitude: number;
+    longitude: number;
+  };
+  parcelId?: string;
+  county?: string;
+  ownerName?: string;
+  legalDescription?: string;
+  propertyUse?: string;
+  floodZone?: string;
+  sfha?: string;
+  sources: PropertyResearchSource[];
+  suggestions: PropertyResearchSuggestion[];
+  notes: string[];
+}
+
 export interface InspectionReport {
   id: string;
   statePackId: string;
@@ -144,6 +201,7 @@ export interface InspectionReport {
   signatureName?: string;
   signedAt?: string;
   exportedAt?: string;
+  researchPacket?: PropertyResearchPacket;
 }
 
 export interface ReportReadiness {

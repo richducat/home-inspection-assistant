@@ -21,7 +21,15 @@ export const seedInspection: InspectionReport = {
     postalCode: "32940",
     yearBuilt: "2007",
     squareFeet: "2,180",
-    occupancy: "occupied"
+    occupancy: "occupied",
+    ownerName: "",
+    county: "",
+    parcelId: "",
+    taxAccount: "",
+    legalDescription: "",
+    propertyUse: "",
+    floodZone: "",
+    sfha: ""
   },
   inspector: {
     name: "Richard Ducat",

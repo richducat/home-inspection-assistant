@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getStatePack } from "./statePacks";
 import { seedInspection } from "./seed";
 import { buildPhotoAnalysis, createSuggestionFromAnalysis } from "./imageAnalysis";
+import { applyResearchSuggestions, buildPropertyResearchLinks } from "./propertyResearch";
 import {
   approveSuggestionAsFinding,
   calculateReportReadiness,
@@ -80,5 +81,39 @@ describe("inspection readiness", () => {
     expect(suggestion.severity).toBe("safety");
     expect(suggestion.recommendation).toContain("licensed electrical contractor");
     expect(suggestion.sourcePhotoLabel).toBe(photo.label);
+  });
+
+  it("applies public-record suggestions to property fields", () => {
+    const packet = {
+      status: "complete" as const,
+      searchedAt: "2026-06-26T15:00:00-04:00",
+      query: "742 Palmetto Ridge Dr, Viera, FL 32940",
+      sources: buildPropertyResearchLinks(seedInspection.property),
+      suggestions: [
+        {
+          fieldPath: "property.ownerName" as const,
+          label: "Owner",
+          value: "PUBLIC RECORD OWNER",
+          sourceId: "brevard-gis-parcels",
+          confidence: "high" as const,
+          applyable: true
+        },
+        {
+          fieldPath: "property.floodZone" as const,
+          label: "FEMA flood zone",
+          value: "X",
+          sourceId: "fema-nfhl",
+          confidence: "high" as const,
+          applyable: true
+        }
+      ],
+      notes: []
+    };
+
+    const updated = applyResearchSuggestions(seedInspection, packet);
+
+    expect(updated.property.ownerName).toBe("PUBLIC RECORD OWNER");
+    expect(updated.property.floodZone).toBe("X");
+    expect(updated.researchPacket?.status).toBe("complete");
   });
 });

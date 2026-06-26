@@ -70,9 +70,9 @@ export const statePacks: StatePack[] = [
       },
       {
         id: "wind-mitigation-readiness",
-        title: "Wind Mitigation Readiness Worksheet",
+        title: "Official Wind Mitigation PDF Export",
         description:
-          "Draft capture checklist for wind mitigation evidence. Final form language must be validated before production filing.",
+          "Maps inspection data onto the supplied OIR-B1-1802 Rev. 04/26 Uniform Mitigation Verification Inspection Form PDF.",
         reviewRequired: true,
         fields: [
           { id: "roof_covering_permit", label: "Roof covering permit/date evidence", required: false, type: "text" },
@@ -82,9 +82,9 @@ export const statePacks: StatePack[] = [
       },
       {
         id: "four-point-readiness",
-        title: "4-Point Readiness Worksheet",
+        title: "Official 4-Point PDF Export",
         description:
-          "Draft capture checklist for roof, electrical, HVAC, and plumbing evidence. Carrier-specific forms must be reviewed separately.",
+          "Maps inspection data onto the supplied BLANK 4 Point 2025 PDF for roof, electrical, HVAC, and plumbing review.",
         reviewRequired: true,
         fields: [
           { id: "roof_age", label: "Roof age/evidence", required: false, type: "text" },
@@ -97,7 +97,7 @@ export const statePacks: StatePack[] = [
     disclaimers: [
       "AI content is assistive only and cannot finalize a report.",
       "A licensed inspector must review every field before export.",
-      "State and carrier-specific form language must be verified before production use."
+      "Official PDF exports use the supplied blank templates; uncaptured carrier fields remain blank or marked for inspector verification."
     ]
   },
   {
@@ -134,4 +134,3 @@ export function getStatePack(packId: string): StatePack {
   }
   return pack;
 }
-

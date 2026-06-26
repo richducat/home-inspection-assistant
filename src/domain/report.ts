@@ -10,6 +10,9 @@ export function buildReportSummary(
   return [
     `${inspection.property.address}, ${inspection.property.city}, ${inspection.property.state}`,
     `Inspection date: ${inspection.inspectionDate || "Not set"}`,
+    `Owner: ${inspection.property.ownerName || "Not populated"}`,
+    `County / parcel: ${inspection.property.county || "Not populated"} / ${inspection.property.parcelId || "Not populated"}`,
+    `Flood zone: ${inspection.property.floodZone || "Not populated"}${inspection.property.sfha ? ` (SFHA ${inspection.property.sfha})` : ""}`,
     `State pack: ${statePack.name} ${statePack.version}`,
     `Inspector: ${inspection.inspector.name} (${inspection.inspector.license})`,
     `Scope: ${inspection.scope || "Not set"}`,
@@ -70,6 +73,19 @@ export function buildPrintableReportHtml(
     )
     .join("");
 
+  const sourceRows = inspection.researchPacket?.sources
+    .map(
+      (source) => `
+        <tr>
+          <td>${escapeHtml(source.title)}</td>
+          <td>${escapeHtml(source.status.replace(/_/g, " "))}</td>
+          <td><a href="${escapeHtml(source.url)}">${escapeHtml(source.url)}</a></td>
+          <td>${escapeHtml(source.detail)}</td>
+        </tr>
+      `
+    )
+    .join("");
+
   return `
     <!doctype html>
     <html>
@@ -82,6 +98,8 @@ export function buildPrintableReportHtml(
           figure { display: inline-block; width: 45%; margin: 0 16px 20px 0; vertical-align: top; }
           img { width: 100%; border-radius: 6px; }
           figcaption { font-size: 12px; color: #59686f; margin-top: 6px; }
+          table { width: 100%; border-collapse: collapse; font-size: 12px; }
+          th, td { border: 1px solid #d7dee2; padding: 7px; text-align: left; vertical-align: top; }
           .status { padding: 8px 10px; border-radius: 6px; background: ${readiness.ready ? "#e1f6ec" : "#fff4d8"}; }
         </style>
       </head>
@@ -89,6 +107,10 @@ export function buildPrintableReportHtml(
         <header>
           <h1>Home Inspection Report Draft</h1>
           <p>${escapeHtml(inspection.property.address)}, ${escapeHtml(inspection.property.city)}, ${escapeHtml(inspection.property.state)} ${escapeHtml(inspection.property.postalCode)}</p>
+          <p>Owner: ${escapeHtml(inspection.property.ownerName || "Not populated")}</p>
+          <p>County / parcel: ${escapeHtml(inspection.property.county || "Not populated")} / ${escapeHtml(inspection.property.parcelId || "Not populated")}</p>
+          <p>Legal description: ${escapeHtml(inspection.property.legalDescription || "Not populated")}</p>
+          <p>Flood zone: ${escapeHtml(inspection.property.floodZone || "Not populated")}${inspection.property.sfha ? ` - SFHA ${escapeHtml(inspection.property.sfha)}` : ""}</p>
           <p>Inspection date: ${escapeHtml(inspection.inspectionDate || "Not set")}</p>
           <p>Inspector: ${escapeHtml(inspection.inspector.name)} - ${escapeHtml(inspection.inspector.license)}</p>
           <p>Company: ${escapeHtml(inspection.inspector.company || "Not set")} - ${escapeHtml(inspection.inspector.email || "No email")}</p>
@@ -108,6 +130,24 @@ export function buildPrintableReportHtml(
         <section>
           <h2>Image Scan Evidence</h2>
           ${scanEvidence || "<p>No completed image scans yet.</p>"}
+        </section>
+        <section>
+          <h2>Public Records Research</h2>
+          <p>Status: ${escapeHtml(inspection.researchPacket?.status || "Not run")}</p>
+          <p>Matched address: ${escapeHtml(inspection.researchPacket?.normalizedAddress || "Not populated")}</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>Status</th>
+                <th>Link</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${sourceRows || "<tr><td colspan=\"4\">No public-record research has been run.</td></tr>"}
+            </tbody>
+          </table>
         </section>
         <section>
           <h2>Compliance Notes</h2>
