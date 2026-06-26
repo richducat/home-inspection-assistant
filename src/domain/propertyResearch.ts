@@ -26,6 +26,12 @@ const AUTO_FILL_FIELDS = new Set<keyof PropertyProfile>([
 
 const SOURCE_DEFINITIONS: Array<Omit<PropertyResearchSource, "status" | "detail"> & { detail: string }> = [
   {
+    id: "arcgis-address-autocomplete",
+    title: "ArcGIS World Geocoding Service",
+    url: "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer",
+    detail: "Nationwide United States address autocomplete and selected-address coordinates."
+  },
+  {
     id: "census-geocoder",
     title: "U.S. Census Geocoder",
     url: CENSUS_GEOCODER_URL,
@@ -129,7 +135,11 @@ export async function researchProperty(inspection: InspectionReport): Promise<Pr
   const query = formatPropertyQuery(property);
   const sources = SOURCE_DEFINITIONS.map((source) => ({
     ...source,
-    status: source.id.includes("brevard") || ["census-geocoder", "fema-nfhl"].includes(source.id) ? "skipped" : "link_only",
+    status:
+      source.id.includes("brevard") ||
+      ["arcgis-address-autocomplete", "census-geocoder", "fema-nfhl"].includes(source.id)
+        ? "skipped"
+        : "link_only",
     detail: source.detail
   })) satisfies PropertyResearchSource[];
   const suggestions: PropertyResearchSuggestion[] = [];
@@ -137,8 +147,8 @@ export async function researchProperty(inspection: InspectionReport): Promise<Pr
     "Public records are used as assistive prefill only. Inspector must verify every official-form field before signature."
   ];
 
-  let normalizedAddress = "";
-  let coordinates: PropertyResearchPacket["coordinates"] | undefined;
+  let normalizedAddress = normalizeText(property.addressMatchLabel);
+  let coordinates = getPropertyCoordinates(property);
   let resolvedCounty = normalizeText(property.county);
   let parcelCentroid: PropertyResearchPacket["coordinates"] | undefined;
 
@@ -153,6 +163,15 @@ export async function researchProperty(inspection: InspectionReport): Promise<Pr
       suggestions,
       notes: ["Property address is required before public-record research can run."]
     };
+  }
+
+  if (coordinates) {
+    setSource(
+      sources,
+      "arcgis-address-autocomplete",
+      "verified",
+      property.addressMatchLabel || "Using selected nationwide address coordinates."
+    );
   }
 
   try {
@@ -508,6 +527,16 @@ function getCoordinatesFromCensus(match: CensusMatch): PropertyResearchPacket["c
     latitude: y,
     longitude: x
   };
+}
+
+function getPropertyCoordinates(property: PropertyProfile): PropertyResearchPacket["coordinates"] | undefined {
+  const latitude = Number(property.latitude);
+  const longitude = Number(property.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return undefined;
+  }
+
+  return { latitude, longitude };
 }
 
 function getCoordinatesFromParcel(feature: ArcGisFeature): PropertyResearchPacket["coordinates"] | undefined {

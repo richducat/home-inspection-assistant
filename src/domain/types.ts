@@ -57,6 +57,11 @@ export interface PropertyProfile {
   propertyUse?: string;
   floodZone?: string;
   sfha?: string;
+  latitude?: number;
+  longitude?: number;
+  addressMatchLabel?: string;
+  addressSource?: string;
+  addressScore?: number;
 }
 
 export interface InspectorProfile {

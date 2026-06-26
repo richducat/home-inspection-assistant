@@ -12,6 +12,7 @@ import {
   FileCheck2,
   Home,
   ImagePlus,
+  MapPin,
   PenLine,
   Plus,
   RotateCcw,
@@ -48,11 +49,18 @@ import {
   type OfficialFormType
 } from "./domain/officialForms";
 import { applyResearchSuggestions, buildPropertyResearchLinks, researchProperty } from "./domain/propertyResearch";
+import {
+  resolveUsAddressSuggestion,
+  suggestUsAddresses,
+  type AddressCandidate,
+  type AddressSuggestion
+} from "./domain/addressAutocomplete";
 
 const STORAGE_KEY = "home-inspection-assistant:v2";
 
 type NavTarget = "workspace" | "photos" | "reports" | "compliance";
 type InspectionField = "inspectionDate" | "scope" | "signatureName";
+const coreAddressFields = new Set(["address", "city", "state", "postalCode"]);
 
 const severityLabels: Record<Severity, string> = {
   maintenance: "Maintenance",
@@ -314,11 +322,38 @@ export function App() {
       status: current.status === "finalized" ? "in_review" : current.status,
       signedAt: current.status === "finalized" ? undefined : current.signedAt,
       exportedAt: current.status === "finalized" ? undefined : current.exportedAt,
+      researchPacket: scope === "property" && coreAddressFields.has(field) ? undefined : current.researchPacket,
       [scope]: {
         ...current[scope],
+        ...(scope === "property" && coreAddressFields.has(field) ? clearedPublicRecordPropertyFields() : {}),
         [field]: value
       }
     }));
+  }
+
+  function handleAddressCandidateSelect(candidate: AddressCandidate) {
+    setInspection((current) => ({
+      ...current,
+      status: current.status === "finalized" ? "in_review" : current.status,
+      signedAt: current.status === "finalized" ? undefined : current.signedAt,
+      exportedAt: current.status === "finalized" ? undefined : current.exportedAt,
+      researchPacket: undefined,
+      property: {
+        ...current.property,
+        ...clearedPublicRecordPropertyFields(),
+        address: candidate.street || candidate.matchAddress,
+        city: candidate.city || current.property.city,
+        state: candidate.state || current.property.state,
+        postalCode: candidate.postalCode || current.property.postalCode,
+        county: candidate.county || current.property.county,
+        latitude: candidate.latitude,
+        longitude: candidate.longitude,
+        addressMatchLabel: candidate.matchAddress,
+        addressSource: candidate.source,
+        addressScore: candidate.score
+      }
+    }));
+    setPropertyResearchStatus("Address selected from nationwide address search. Run public-record research to pull parcel and form data.");
   }
 
   function handleInspectionFieldChange(field: InspectionField, value: string) {
@@ -483,6 +518,7 @@ export function App() {
               property={inspection.property}
               inspector={inspection.inspector}
               onFieldChange={handleFieldChange}
+              onAddressCandidateSelect={handleAddressCandidateSelect}
               onInspectionFieldChange={handleInspectionFieldChange}
             />
           </div>
@@ -815,6 +851,7 @@ function ProfileEditor({
   property,
   inspector,
   onFieldChange,
+  onAddressCandidateSelect,
   onInspectionFieldChange
 }: {
   inspectionDate: string;
@@ -822,8 +859,91 @@ function ProfileEditor({
   property: PropertyProfile;
   inspector: InspectionReport["inspector"];
   onFieldChange: (scope: "property" | "inspector", field: string, value: string) => void;
+  onAddressCandidateSelect: (candidate: AddressCandidate) => void;
   onInspectionFieldChange: (field: InspectionField, value: string) => void;
 }) {
+  const [addressSuggestions, setAddressSuggestions] = useState<AddressSuggestion[]>([]);
+  const [addressSearchStatus, setAddressSearchStatus] = useState("");
+  const [addressSearchOpen, setAddressSearchOpen] = useState(false);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
+  const [selectedAddressText, setSelectedAddressText] = useState(property.addressMatchLabel || property.address);
+
+  useEffect(() => {
+    const query = property.address.trim();
+    if (query.length < 4 || query === selectedAddressText) {
+      setAddressSuggestions([]);
+      setAddressSearchOpen(false);
+      setAddressSearchStatus(query.length > 0 && query.length < 4 ? "Type at least 4 characters for nationwide address search." : "");
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setAddressSearchStatus("Searching United States address database...");
+      try {
+        const suggestions = await suggestUsAddresses(query, controller.signal);
+        setAddressSuggestions(suggestions);
+        setActiveSuggestionIndex(0);
+        setAddressSearchOpen(suggestions.length > 0);
+        setAddressSearchStatus(
+          suggestions.length > 0
+            ? `${suggestions.length} address match${suggestions.length === 1 ? "" : "es"} found.`
+            : "No nationwide address matches found yet."
+        );
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setAddressSuggestions([]);
+          setAddressSearchOpen(false);
+          setAddressSearchStatus("Address search is temporarily unavailable. You can still type the address manually.");
+        }
+      }
+    }, 275);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [property.address, selectedAddressText]);
+
+  async function handleSuggestionSelect(suggestion: AddressSuggestion) {
+    setAddressSearchStatus("Resolving selected address...");
+    try {
+      const candidate = await resolveUsAddressSuggestion(suggestion);
+      onAddressCandidateSelect(candidate);
+      setSelectedAddressText(candidate.street || suggestion.text);
+      setAddressSuggestions([]);
+      setAddressSearchOpen(false);
+      setAddressSearchStatus(`Selected ${candidate.matchAddress}.`);
+    } catch {
+      setAddressSearchStatus("Could not resolve that address. Try another suggestion or enter it manually.");
+    }
+  }
+
+  function handleAddressKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (!addressSearchOpen || addressSuggestions.length === 0) {
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveSuggestionIndex((current) => (current + 1) % addressSuggestions.length);
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveSuggestionIndex((current) => (current - 1 + addressSuggestions.length) % addressSuggestions.length);
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void handleSuggestionSelect(addressSuggestions[activeSuggestionIndex]);
+    }
+
+    if (event.key === "Escape") {
+      setAddressSearchOpen(false);
+    }
+  }
+
   return (
     <div className="profile-grid">
       <label>
@@ -834,12 +954,50 @@ function ProfileEditor({
           onChange={(event) => onInspectionFieldChange("inspectionDate", event.target.value)}
         />
       </label>
-      <label>
+      <label className="address-autocomplete-field">
         Property address
-        <input
-          value={property.address}
-          onChange={(event) => onFieldChange("property", "address", event.target.value)}
-        />
+        <div className="address-autocomplete">
+          <input
+            autoComplete="off"
+            aria-autocomplete="list"
+            aria-expanded={addressSearchOpen}
+            value={property.address}
+            onChange={(event) => {
+              setSelectedAddressText("");
+              setAddressSuggestions([]);
+              setAddressSearchOpen(false);
+              setAddressSearchStatus("Searching United States address database...");
+              onFieldChange("property", "address", event.target.value);
+            }}
+            onFocus={() => setAddressSearchOpen(addressSuggestions.length > 0)}
+            onKeyDown={handleAddressKeyDown}
+          />
+          {addressSearchOpen && addressSuggestions.length > 0 && (
+            <div className="address-suggestion-menu" role="listbox" aria-label="Address suggestions">
+              {addressSuggestions.map((suggestion, index) => (
+                <button
+                  className={index === activeSuggestionIndex ? "address-suggestion active" : "address-suggestion"}
+                  key={suggestion.magicKey}
+                  type="button"
+                  role="option"
+                  aria-selected={index === activeSuggestionIndex}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => void handleSuggestionSelect(suggestion)}
+                >
+                  <MapPin size={14} />
+                  <span>{suggestion.text}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {addressSearchStatus && <span className="address-search-status">{addressSearchStatus}</span>}
+        {property.addressMatchLabel && (
+          <span className="address-match-note">
+            Matched: {property.addressMatchLabel}
+            {property.addressScore ? ` · ${Math.round(property.addressScore)} score` : ""}
+          </span>
+        )}
       </label>
       <label>
         City
@@ -1674,6 +1832,24 @@ function cloneInspection(inspection: InspectionReport): InspectionReport {
   return JSON.parse(JSON.stringify(inspection)) as InspectionReport;
 }
 
+function clearedPublicRecordPropertyFields() {
+  return {
+    ownerName: "",
+    county: "",
+    parcelId: "",
+    taxAccount: "",
+    legalDescription: "",
+    propertyUse: "",
+    floodZone: "",
+    sfha: "",
+    latitude: undefined,
+    longitude: undefined,
+    addressMatchLabel: "",
+    addressSource: "",
+    addressScore: undefined
+  };
+}
+
 function normalizeInspection(inspection: InspectionReport): InspectionReport {
   const cloned = cloneInspection(inspection);
   const property = {
@@ -1692,7 +1868,12 @@ function normalizeInspection(inspection: InspectionReport): InspectionReport {
     legalDescription: cloned.property.legalDescription ?? "",
     propertyUse: cloned.property.propertyUse ?? "",
     floodZone: cloned.property.floodZone ?? "",
-    sfha: cloned.property.sfha ?? ""
+    sfha: cloned.property.sfha ?? "",
+    latitude: cloned.property.latitude,
+    longitude: cloned.property.longitude,
+    addressMatchLabel: cloned.property.addressMatchLabel ?? "",
+    addressSource: cloned.property.addressSource ?? "",
+    addressScore: cloned.property.addressScore
   };
 
   return {
@@ -1729,7 +1910,12 @@ function createBlankInspection(systems: InspectionSystem[], statePackId: string)
       legalDescription: "",
       propertyUse: "",
       floodZone: "",
-      sfha: ""
+      sfha: "",
+      latitude: undefined,
+      longitude: undefined,
+      addressMatchLabel: "",
+      addressSource: "",
+      addressScore: undefined
     },
     inspector: {
       name: "",

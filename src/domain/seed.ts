@@ -29,7 +29,12 @@ export const seedInspection: InspectionReport = {
     legalDescription: "",
     propertyUse: "",
     floodZone: "",
-    sfha: ""
+    sfha: "",
+    latitude: undefined,
+    longitude: undefined,
+    addressMatchLabel: "",
+    addressSource: "",
+    addressScore: undefined
   },
   inspector: {
     name: "Richard Ducat",
