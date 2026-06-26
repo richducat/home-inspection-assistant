@@ -343,6 +343,7 @@ textarea {
 .form-row,
 .report-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
@@ -360,6 +361,10 @@ textarea {
 .primary-button {
   color: white;
   background: var(--teal);
+}
+
+.scan-button {
+  background: #0b5f59;
 }
 
 .primary-button:hover {
@@ -566,6 +571,120 @@ textarea {
   background: var(--teal-soft);
 }
 
+.scan-result,
+.scan-placeholder,
+.scan-error {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.scan-result {
+  border: 1px solid #bfe3de;
+  background: linear-gradient(180deg, #f0fbf9, #ffffff);
+}
+
+.scan-result-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.scan-result-header span {
+  margin-top: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.scan-result-header strong {
+  margin-top: 4px;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+.scan-severity {
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 4px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.scan-severity.safety {
+  color: var(--red);
+  background: var(--red-soft);
+}
+
+.scan-severity.repair {
+  color: #7a4d0b;
+  background: var(--amber-soft);
+}
+
+.scan-severity.monitor,
+.scan-severity.maintenance {
+  color: var(--teal-strong);
+  background: var(--teal-soft);
+}
+
+.scan-result p {
+  margin: 10px 0 0;
+  color: #405057;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.scan-metrics,
+.scan-signal-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.scan-metrics span,
+.scan-signal-row span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 4px 7px;
+  color: #25343a;
+  border-radius: 99px;
+  background: #edf4f4;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.scan-signal-row.compact {
+  margin-top: 10px;
+}
+
+.scan-placeholder {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.scan-placeholder svg {
+  flex: 0 0 auto;
+  color: var(--teal);
+}
+
+.scan-error {
+  color: var(--red);
+  background: var(--red-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .photo-empty {
   display: grid;
   place-items: center;
@@ -747,6 +866,17 @@ textarea {
   color: #405057;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.suggestion-source {
+  margin-top: 8px;
+  color: var(--teal-strong);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.recommendation-text strong {
+  color: var(--text);
 }
 
 .suggestion-footer {

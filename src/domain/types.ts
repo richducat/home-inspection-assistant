@@ -67,6 +67,7 @@ export interface PhotoEvidence {
   capturedAt: string;
   tags: string[];
   uploaded: boolean;
+  analysis?: PhotoAnalysis;
 }
 
 export interface Finding {
@@ -89,9 +90,37 @@ export interface AiSuggestion {
   title: string;
   draft: string;
   confidence: number;
+  severity?: Severity;
+  recommendation?: string;
+  visualSignals?: string[];
+  sourcePhotoLabel?: string;
   reviewState: ReviewState;
   model: string;
   generatedAt: string;
+}
+
+export interface ImageScanMetrics {
+  width: number;
+  height: number;
+  brightness: number;
+  contrast: number;
+  edgeDensity: number;
+  darkRatio: number;
+  warmRatio: number;
+  redRatio: number;
+}
+
+export interface PhotoAnalysis {
+  id: string;
+  scannedAt: string;
+  model: string;
+  confidence: number;
+  severity: Severity;
+  detectedIssue: string;
+  summary: string;
+  recommendation: string;
+  visualSignals: string[];
+  metrics: ImageScanMetrics;
 }
 
 export interface SystemProgress {

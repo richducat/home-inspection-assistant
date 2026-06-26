@@ -93,8 +93,8 @@ export function convertSuggestionToFinding(
     photoIds: suggestion.photoIds,
     title: suggestion.title,
     narrative: suggestion.draft,
-    severity,
-    recommendation: "Inspector to confirm and edit final recommendation before export.",
+    severity: suggestion.severity ?? severity,
+    recommendation: suggestion.recommendation ?? "Inspector to confirm and edit final recommendation before export.",
     reviewState: "approved",
     source: "ai"
   };

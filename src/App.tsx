@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { statePacks } from "./domain/statePacks";
 import { seedInspection } from "./domain/seed";
+import { analyzePhotoEvidence, createSuggestionFromAnalysis } from "./domain/imageAnalysis";
 import type {
   AiSuggestion,
   Finding,
@@ -67,6 +68,8 @@ export function App() {
   const [reportOpen, setReportOpen] = useState(false);
   const [complianceOpen, setComplianceOpen] = useState(false);
   const [activeNav, setActiveNav] = useState<NavTarget>("workspace");
+  const [scanningPhotoId, setScanningPhotoId] = useState("");
+  const [scanError, setScanError] = useState("");
   const [lastSavedAt, setLastSavedAt] = useState(() => new Date().toLocaleTimeString());
 
   const statePack = useMemo(
@@ -157,7 +160,39 @@ export function App() {
 
     setInspection((current) => ({ ...current, photos: [nextPhoto, ...current.photos] }));
     setSelectedPhotoId(nextPhoto.id);
+    setScanError("");
     event.target.value = "";
+  }
+
+  async function handleAnalyzePhoto() {
+    const photo = selectedPhoto;
+    if (!photo || scanningPhotoId) {
+      return;
+    }
+
+    setScanningPhotoId(photo.id);
+    setScanError("");
+
+    try {
+      const system = statePack.systems.find((candidate) => candidate.id === photo.systemId) ?? activeSystem;
+      const analysis = await analyzePhotoEvidence(photo, system);
+      const suggestion = createSuggestionFromAnalysis(analysis, photo);
+
+      setInspection((current) => ({
+        ...current,
+        status: current.status === "finalized" ? "in_review" : current.status,
+        signedAt: current.status === "finalized" ? undefined : current.signedAt,
+        exportedAt: current.status === "finalized" ? undefined : current.exportedAt,
+        photos: current.photos.map((candidate) =>
+          candidate.id === photo.id ? { ...candidate, analysis } : candidate
+        ),
+        aiSuggestions: [suggestion, ...current.aiSuggestions]
+      }));
+    } catch {
+      setScanError("Photo scan could not read this image. Try another image or re-upload it.");
+    } finally {
+      setScanningPhotoId("");
+    }
   }
 
   function handleSuggestionAction(suggestion: AiSuggestion, action: "approve" | "edit" | "reject") {
@@ -391,7 +426,10 @@ export function App() {
             onSelectPhoto={setSelectedPhotoId}
             onAddPhoto={handleAddPhoto}
             onUpdatePhoto={handlePhotoChange}
+            onAnalyzePhoto={handleAnalyzePhoto}
             onGenerateDraft={handleGenerateDraft}
+            scanningPhotoId={scanningPhotoId}
+            scanError={scanError}
           />
           <ReviewPanel
             statePackName={statePack.name}
@@ -772,7 +810,10 @@ function PhotoWorkspace({
   onSelectPhoto,
   onAddPhoto,
   onUpdatePhoto,
-  onGenerateDraft
+  onAnalyzePhoto,
+  onGenerateDraft,
+  scanningPhotoId,
+  scanError
 }: {
   systemLabel: string;
   photos: PhotoEvidence[];
@@ -780,8 +821,13 @@ function PhotoWorkspace({
   onSelectPhoto: (photoId: string) => void;
   onAddPhoto: (event: React.ChangeEvent<HTMLInputElement>) => void;
   onUpdatePhoto: (photoId: string, patch: Pick<PhotoEvidence, "label" | "location">) => void;
+  onAnalyzePhoto: () => void;
   onGenerateDraft: () => void;
+  scanningPhotoId: string;
+  scanError: string;
 }) {
+  const selectedPhotoIsScanning = Boolean(selectedPhoto && scanningPhotoId === selectedPhoto.id);
+
   return (
     <section className="panel photo-panel" id="photo-evidence-panel">
       <div className="panel-header">
@@ -790,6 +836,15 @@ function PhotoWorkspace({
           <h2>Photo evidence</h2>
         </div>
         <div className="button-pair">
+          <button
+            className="primary-button scan-button"
+            type="button"
+            disabled={!selectedPhoto || Boolean(scanningPhotoId)}
+            onClick={onAnalyzePhoto}
+          >
+            <Sparkles size={15} />
+            {selectedPhotoIsScanning ? "Scanning..." : "Scan photo"}
+          </button>
           <button className="ghost-button" type="button" onClick={onGenerateDraft}>
             <Sparkles size={15} />
             Draft
@@ -831,6 +886,36 @@ function PhotoWorkspace({
                 <span key={tag}>{tag}</span>
               ))}
             </div>
+            {selectedPhoto.analysis ? (
+              <div className="scan-result" aria-label="Image scan result">
+                <div className="scan-result-header">
+                  <div>
+                    <span>Image scan detected</span>
+                    <strong>{selectedPhoto.analysis.detectedIssue}</strong>
+                  </div>
+                  <span className={`scan-severity ${selectedPhoto.analysis.severity}`}>
+                    {severityLabels[selectedPhoto.analysis.severity]}
+                  </span>
+                </div>
+                <p>{selectedPhoto.analysis.summary}</p>
+                <div className="scan-metrics">
+                  <span>{Math.round(selectedPhoto.analysis.confidence * 100)}% confidence</span>
+                  <span>{Math.round(selectedPhoto.analysis.metrics.edgeDensity * 100)}% edge density</span>
+                  <span>{Math.round(selectedPhoto.analysis.metrics.contrast * 100)}% contrast</span>
+                </div>
+                <div className="scan-signal-row">
+                  {selectedPhoto.analysis.visualSignals.slice(0, 5).map((signal) => (
+                    <span key={signal}>{signal}</span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="scan-placeholder">
+                <Sparkles size={15} />
+                Scan this photo to identify visible inspection issues and generate a review draft.
+              </div>
+            )}
+            {scanError && <div className="scan-error">{scanError}</div>}
           </div>
         </div>
       )}
@@ -972,7 +1057,25 @@ function ReviewPanel({
               <strong>{suggestion.title}</strong>
               <span>{Math.round(suggestion.confidence * 100)}%</span>
             </div>
+            {suggestion.sourcePhotoLabel && (
+              <div className="suggestion-source">
+                Image scan source: {suggestion.sourcePhotoLabel}
+                {suggestion.severity ? ` · ${severityLabels[suggestion.severity]}` : ""}
+              </div>
+            )}
             <p>{suggestion.draft}</p>
+            {suggestion.visualSignals && suggestion.visualSignals.length > 0 && (
+              <div className="scan-signal-row compact">
+                {suggestion.visualSignals.slice(0, 4).map((signal) => (
+                  <span key={signal}>{signal}</span>
+                ))}
+              </div>
+            )}
+            {suggestion.recommendation && (
+              <p className="recommendation-text">
+                <strong>Recommendation:</strong> {suggestion.recommendation}
+              </p>
+            )}
             <div className="suggestion-footer">
               <span className={`review-chip ${suggestion.reviewState}`}>{suggestion.reviewState.replace("_", " ")}</span>
               <div>
@@ -1118,10 +1221,30 @@ function ReportDrawer({
             {inspection.photos.map((photo) => (
               <figure key={photo.id}>
                 <img src={photo.url} alt={photo.label} />
-                <figcaption>{photo.label}</figcaption>
+                <figcaption>
+                  {photo.label}
+                  {photo.analysis ? ` · Scan: ${photo.analysis.detectedIssue}` : ""}
+                </figcaption>
               </figure>
             ))}
           </div>
+        </section>
+        <section className="report-section">
+          <h3>Image scan evidence</h3>
+          {inspection.photos.filter((photo) => photo.analysis).length === 0 && <p>No completed image scans yet.</p>}
+          {inspection.photos
+            .filter((photo) => photo.analysis)
+            .map((photo) => (
+              <article key={`${photo.id}-scan`}>
+                <strong>{photo.analysis?.detectedIssue}</strong>
+                <p>
+                  {photo.label} · {photo.location} ·{" "}
+                  {Math.round((photo.analysis?.confidence ?? 0) * 100)}% confidence ·{" "}
+                  {photo.analysis ? severityLabels[photo.analysis.severity] : "Review"}
+                </p>
+                <p>{photo.analysis?.summary}</p>
+              </article>
+            ))}
         </section>
         <section className="report-section">
           <h3>Compliance notes</h3>

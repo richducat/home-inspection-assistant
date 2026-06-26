@@ -48,8 +48,24 @@ export function buildPrintableReportHtml(
       (photo) => `
         <figure>
           <img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.label)}" />
-          <figcaption>${escapeHtml(photo.label)} - ${escapeHtml(photo.location)}</figcaption>
+          <figcaption>${escapeHtml(photo.label)} - ${escapeHtml(photo.location)}${photo.analysis ? ` - Scan: ${escapeHtml(photo.analysis.detectedIssue)}` : ""}</figcaption>
         </figure>
+      `
+    )
+    .join("");
+
+  const scanEvidence = inspection.photos
+    .filter((photo) => photo.analysis)
+    .map(
+      (photo) => `
+        <section>
+          <h3>${escapeHtml(photo.analysis?.detectedIssue ?? "Image scan result")}</h3>
+          <p><strong>Photo:</strong> ${escapeHtml(photo.label)} - ${escapeHtml(photo.location)}</p>
+          <p><strong>Severity:</strong> ${escapeHtml(photo.analysis?.severity ?? "review")}</p>
+          <p><strong>Confidence:</strong> ${Math.round((photo.analysis?.confidence ?? 0) * 100)}%</p>
+          <p>${escapeHtml(photo.analysis?.summary ?? "")}</p>
+          <p><strong>Recommendation:</strong> ${escapeHtml(photo.analysis?.recommendation ?? "")}</p>
+        </section>
       `
     )
     .join("");
@@ -88,6 +104,10 @@ export function buildPrintableReportHtml(
         <section>
           <h2>Photo Evidence</h2>
           ${photos}
+        </section>
+        <section>
+          <h2>Image Scan Evidence</h2>
+          ${scanEvidence || "<p>No completed image scans yet.</p>"}
         </section>
         <section>
           <h2>Compliance Notes</h2>
