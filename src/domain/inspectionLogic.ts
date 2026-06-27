@@ -34,6 +34,10 @@ export function calculateReportReadiness(
     (suggestion) => suggestion.reviewState === "needs_review"
   ).length;
 
+  const unreviewedFieldSuggestions = inspection.fieldSuggestions.filter(
+    (suggestion) => suggestion.reviewState === "needs_review"
+  ).length;
+
   const rejectedSuggestions = inspection.aiSuggestions.filter(
     (suggestion) => suggestion.reviewState === "rejected"
   ).length;
@@ -51,19 +55,28 @@ export function calculateReportReadiness(
       ? inspection.aiSuggestions.filter((suggestion) => suggestion.reviewState !== "needs_review").length /
         inspection.aiSuggestions.length
       : 1;
+  const fieldReviewPercent =
+    inspection.fieldSuggestions.length > 0
+      ? inspection.fieldSuggestions.filter((suggestion) => suggestion.reviewState !== "needs_review").length /
+        inspection.fieldSuggestions.length
+      : 1;
 
-  const completionPercent = Math.round(((systemsPercent * 0.65 + reviewPercent * 0.35) || 0) * 100);
+  const completionPercent = Math.round(
+    ((systemsPercent * 0.58 + reviewPercent * 0.27 + fieldReviewPercent * 0.15) || 0) * 100
+  );
 
   return {
     ready:
       missingRequiredSystems.length === 0 &&
       missingRequiredFields.length === 0 &&
       unreviewedSuggestions === 0 &&
+      unreviewedFieldSuggestions === 0 &&
       approvedFindings > 0,
     completionPercent,
     missingRequiredSystems,
     missingRequiredFields,
     unreviewedSuggestions,
+    unreviewedFieldSuggestions,
     rejectedSuggestions,
     safetyFindings,
     approvedFindings

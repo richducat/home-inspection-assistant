@@ -6,6 +6,66 @@ export type ReviewState = "needs_review" | "approved" | "edited" | "rejected";
 
 export type SystemStatus = "not_started" | "in_progress" | "complete";
 
+export type InspectionType =
+  | "four-point"
+  | "wind-mitigation"
+  | "insurance-combo"
+  | "roof-certification"
+  | "full-home";
+
+export type PaymentStatus = "unpaid" | "deposit_paid" | "paid" | "invoiced" | "waived";
+
+export type IntakeSource = "website" | "google_calendar" | "phone" | "manual";
+
+export type PermitType = "roof" | "electrical" | "hvac" | "plumbing" | "structural" | "other";
+
+export type PermitCandidateStatus = "candidate" | "selected" | "rejected";
+
+export interface InspectionRequest {
+  clientName: string;
+  insuredName: string;
+  phone: string;
+  email: string;
+  inspectionType: InspectionType;
+  price: string;
+  paymentStatus: PaymentStatus;
+  appointmentStart: string;
+  appointmentEnd: string;
+  source: IntakeSource;
+  notes: string;
+  calendarEventId?: string;
+  calendarSummary?: string;
+}
+
+export interface OfficialFormFields {
+  policyNumber: string;
+  insuranceCompany: string;
+  stories: string;
+  workPhone: string;
+  roofCovering: string;
+  roofCoveringYear: string;
+  roofAge: string;
+  roofRemainingLife: string;
+  roofPermitDate: string;
+  roofCondition: string;
+  roofDeckAttachmentNote: string;
+  openingProtectionNote: string;
+  electricalMainType: string;
+  electricalAmps: string;
+  panelBrand: string;
+  panelAge: string;
+  electricalCondition: string;
+  hvacLastService: string;
+  hvacAge: string;
+  hvacUpdated: string;
+  hvacCondition: string;
+  plumbingMaterial: string;
+  visibleLeaks: string;
+  waterHeaterLocation: string;
+  waterHeaterAge: string;
+  plumbingCondition: string;
+}
+
 export interface StatePackField {
   id: string;
   label: string;
@@ -76,6 +136,7 @@ export interface PhotoEvidence {
   url: string;
   label: string;
   systemId: string;
+  slotId?: string;
   location: string;
   capturedAt: string;
   tags: string[];
@@ -110,6 +171,19 @@ export interface AiSuggestion {
   reviewState: ReviewState;
   model: string;
   generatedAt: string;
+}
+
+export interface FieldSuggestion {
+  id: string;
+  fieldId: keyof OfficialFormFields;
+  label: string;
+  value: string;
+  source: "image_scan" | "public_record" | "calendar" | "permit" | "inspector";
+  confidence: number;
+  reviewState: ReviewState;
+  createdAt: string;
+  sourceId?: string;
+  photoIds?: string[];
 }
 
 export interface ImageScanMetrics {
@@ -188,21 +262,42 @@ export interface PropertyResearchPacket {
   sfha?: string;
   sources: PropertyResearchSource[];
   suggestions: PropertyResearchSuggestion[];
+  permitCandidates: PermitCandidate[];
   notes: string[];
+}
+
+export interface PermitCandidate {
+  id: string;
+  type: PermitType;
+  title: string;
+  permitNumber: string;
+  issuedDate: string;
+  finalDate: string;
+  contractor: string;
+  sourceId: string;
+  sourceUrl: string;
+  confidence: "high" | "medium" | "low";
+  status: PermitCandidateStatus;
+  notes: string;
+  importFields?: Partial<OfficialFormFields>;
 }
 
 export interface InspectionReport {
   id: string;
   statePackId: string;
   status: InspectionStatus;
+  request: InspectionRequest;
   inspectionDate: string;
   scope: string;
   property: PropertyProfile;
   inspector: InspectorProfile;
+  officialFields: OfficialFormFields;
   systems: SystemProgress[];
   photos: PhotoEvidence[];
   findings: Finding[];
   aiSuggestions: AiSuggestion[];
+  fieldSuggestions: FieldSuggestion[];
+  permitCandidates: PermitCandidate[];
   signatureName?: string;
   signedAt?: string;
   exportedAt?: string;
@@ -215,6 +310,7 @@ export interface ReportReadiness {
   missingRequiredSystems: string[];
   missingRequiredFields: string[];
   unreviewedSuggestions: number;
+  unreviewedFieldSuggestions: number;
   rejectedSuggestions: number;
   safetyFindings: number;
   approvedFindings: number;

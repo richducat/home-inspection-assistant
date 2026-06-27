@@ -216,13 +216,24 @@ function getDerivedFormData(inspection: InspectionReport) {
   const findings = inspection.findings.filter((finding) => finding.reviewState !== "rejected");
   const electricalFindings = findings.filter((finding) => finding.systemId === "electrical");
   const roofFindings = findings.filter((finding) => finding.systemId === "roof");
-  const ownerName = inspection.property.ownerName || inspection.researchPacket?.ownerName || "Owner name required";
+  const selectedRoofPermit = inspection.permitCandidates.find(
+    (permit) => permit.status === "selected" && permit.type === "roof"
+  );
+  const selectedHvacPermit = inspection.permitCandidates.find(
+    (permit) => permit.status === "selected" && permit.type === "hvac"
+  );
+  const ownerName =
+    inspection.request.insuredName ||
+    inspection.property.ownerName ||
+    inspection.researchPacket?.ownerName ||
+    "Owner name required";
   const county = inspection.property.county || inspection.researchPacket?.county || "County required";
   const publicRecordComments = buildPublicRecordComments(inspection);
+  const official = inspection.officialFields;
 
   return {
     ownerName,
-    contactPerson: inspection.inspector.name,
+    contactPerson: inspection.request.clientName || inspection.inspector.name,
     propertyStreet: inspection.property.address,
     fullAddress: [
       inspection.property.address,
@@ -233,29 +244,31 @@ function getDerivedFormData(inspection: InspectionReport) {
       .filter(Boolean)
       .join(", "),
     county,
-    policyNumber: "Policy # required",
-    insuranceCompany: "Insurance company required",
-    stories: "1",
+    policyNumber: official.policyNumber || "Policy # required",
+    insuranceCompany: official.insuranceCompany || "Insurance company required",
+    stories: official.stories || "1",
     initials: initialsFor(inspection.inspector.name),
-    electricalMainType: "Circuit breaker",
-    electricalAmps: "200",
-    panelAge: "Unknown",
-    panelBrand: "Inspector verify",
-    hasElectricalSafetyFinding: electricalFindings.some((finding) => finding.severity === "safety"),
-    hvacLastService: "Inspector verify",
-    hvacAge: "Unknown",
-    hvacUpdated: "Unknown",
-    waterHeaterLocation: "Inspector verify",
-    waterHeaterAge: "Unknown",
-    roofCovering: "Asphalt/Fiberglass",
-    roofCoveringYear: inspection.property.yearBuilt || "Unknown",
-    roofAge: inspection.property.yearBuilt ? String(Math.max(0, new Date().getFullYear() - Number(inspection.property.yearBuilt))) : "Unknown",
-    roofRemainingLife: roofFindings.length > 0 ? "Inspector verify" : "Unknown",
-    roofPermitDate: "Unknown",
-    roofDeckAttachmentNote: publicRecordComments || "Inspector verification required",
-    openingProtectionNote: "Inspector verification required",
+    electricalMainType: official.electricalMainType || "Inspector verify",
+    electricalAmps: official.electricalAmps || "Inspector verify",
+    panelAge: official.panelAge || "Unknown",
+    panelBrand: official.panelBrand || "Inspector verify",
+    hasElectricalSafetyFinding:
+      electricalFindings.some((finding) => finding.severity === "safety") ||
+      official.electricalCondition.toLowerCase().includes("unsatisfactory"),
+    hvacLastService: official.hvacLastService || "Inspector verify",
+    hvacAge: official.hvacAge || selectedHvacPermit?.finalDate?.slice(0, 4) || "Unknown",
+    hvacUpdated: official.hvacUpdated || selectedHvacPermit?.finalDate || selectedHvacPermit?.issuedDate || "Unknown",
+    waterHeaterLocation: official.waterHeaterLocation || "Inspector verify",
+    waterHeaterAge: official.waterHeaterAge || "Unknown",
+    roofCovering: official.roofCovering || "Inspector verify",
+    roofCoveringYear: official.roofCoveringYear || selectedRoofPermit?.finalDate?.slice(0, 4) || inspection.property.yearBuilt || "Unknown",
+    roofAge: official.roofAge || roofAgeFromYear(official.roofCoveringYear || inspection.property.yearBuilt),
+    roofRemainingLife: official.roofRemainingLife || (roofFindings.length > 0 ? "Inspector verify" : "Unknown"),
+    roofPermitDate: official.roofPermitDate || selectedRoofPermit?.finalDate || selectedRoofPermit?.issuedDate || "Unknown",
+    roofDeckAttachmentNote: official.roofDeckAttachmentNote || publicRecordComments || "Inspector verification required",
+    openingProtectionNote: official.openingProtectionNote || "Inspector verification required",
     buildingCode: getBuildingCodeAnswer(inspection.property.yearBuilt),
-    workPhone: "Phone required",
+    workPhone: official.workPhone || inspection.request.phone || "Phone required",
     comments: buildComments(findings, inspection, publicRecordComments)
   };
 }
@@ -274,7 +287,12 @@ function buildPublicRecordComments(inspection: InspectionReport): string {
     inspection.property.parcelId ? `Parcel ${inspection.property.parcelId}` : "",
     inspection.property.taxAccount ? `Tax account ${inspection.property.taxAccount}` : "",
     inspection.property.floodZone ? `FEMA flood zone ${inspection.property.floodZone}` : "",
-    inspection.property.sfha ? `SFHA ${inspection.property.sfha}` : ""
+    inspection.property.sfha ? `SFHA ${inspection.property.sfha}` : "",
+    ...inspection.permitCandidates
+      .filter((permit) => permit.status === "selected")
+      .map((permit) =>
+        `${permit.title}${permit.permitNumber ? ` ${permit.permitNumber}` : ""}${permit.finalDate ? ` finaled ${permit.finalDate}` : ""}`
+      )
   ].filter(Boolean);
 
   if (records.length === 0) {
@@ -282,6 +300,14 @@ function buildPublicRecordComments(inspection: InspectionReport): string {
   }
 
   return `Public records prefill: ${records.join("; ")}. Inspector must verify against official source documents.`;
+}
+
+function roofAgeFromYear(yearBuilt: string): string {
+  const year = Number(yearBuilt);
+  if (!Number.isFinite(year)) {
+    return "Unknown";
+  }
+  return String(Math.max(0, new Date().getFullYear() - year));
 }
 
 function getBuildingCodeAnswer(yearBuilt: string): "A" | "B" | "D" {

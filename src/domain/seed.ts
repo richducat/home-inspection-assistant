@@ -11,6 +11,21 @@ export const seedInspection: InspectionReport = {
   id: "inspection-viera-001",
   statePackId: "fl-2026-starter",
   status: "in_review",
+  request: {
+    clientName: "Beth York",
+    insuredName: "Public Record Owner",
+    phone: "321-555-0188",
+    email: "beth@example.com",
+    inspectionType: "insurance-combo",
+    price: "$149",
+    paymentStatus: "invoiced",
+    appointmentStart: "2026-06-24T15:40",
+    appointmentEnd: "2026-06-24T16:40",
+    source: "website",
+    notes:
+      "Client booked online. Confirm access, payment, and that the electrical panel is clear before arrival.",
+    calendarSummary: "Insurance combo inspection - 742 Palmetto Ridge Dr"
+  },
   inspectionDate: "2026-06-24",
   scope:
     "General visual home inspection of readily accessible systems and components with photo evidence, inspector review, and state-pack guardrails.",
@@ -37,10 +52,38 @@ export const seedInspection: InspectionReport = {
     addressScore: undefined
   },
   inspector: {
-    name: "Richard Ducat",
-    company: "EB28 Field Services",
+    name: "Beth York",
+    company: "York Home Inspections",
     license: "FL-HI-REVIEW",
-    email: "inspections@eb28.co"
+    email: "inspections@yorkinspections.com"
+  },
+  officialFields: {
+    policyNumber: "",
+    insuranceCompany: "",
+    stories: "1",
+    workPhone: "321-555-0188",
+    roofCovering: "Asphalt/Fiberglass",
+    roofCoveringYear: "2017",
+    roofAge: "9",
+    roofRemainingLife: "Inspector verify",
+    roofPermitDate: "2017",
+    roofCondition: "Inspector verify",
+    roofDeckAttachmentNote: "Permit/product approval review required",
+    openingProtectionNote: "Inspector verification required",
+    electricalMainType: "Circuit breaker",
+    electricalAmps: "200",
+    panelBrand: "Inspector verify",
+    panelAge: "Unknown",
+    electricalCondition: "Unsatisfactory until panel safety review is cleared",
+    hvacLastService: "Inspector verify",
+    hvacAge: "Unknown",
+    hvacUpdated: "Inspector verify",
+    hvacCondition: "Inspector verify",
+    plumbingMaterial: "Inspector verify",
+    visibleLeaks: "Inspector verify",
+    waterHeaterLocation: "Utility closet",
+    waterHeaterAge: "Unknown",
+    plumbingCondition: "Inspector verify"
   },
   signatureName: "",
   systems: getStatePack("fl-2026-starter").systems.map((system, index) => ({
@@ -54,6 +97,7 @@ export const seedInspection: InspectionReport = {
       url: roofPhotoUrl,
       label: "Front elevation and roof plane",
       systemId: "roof",
+      slotId: "roof-covering",
       location: "Exterior front",
       capturedAt: now,
       tags: ["roof", "exterior", "covering"],
@@ -64,6 +108,7 @@ export const seedInspection: InspectionReport = {
       url: electricalPhotoUrl,
       label: "Main electrical service panel",
       systemId: "electrical",
+      slotId: "electrical-panel",
       location: "Garage",
       capturedAt: now,
       tags: ["electrical", "panel", "safety"],
@@ -74,6 +119,7 @@ export const seedInspection: InspectionReport = {
       url: hvacPhotoUrl,
       label: "Outdoor condenser equipment",
       systemId: "hvac",
+      slotId: "hvac-equipment",
       location: "East side yard",
       capturedAt: now,
       tags: ["hvac", "condenser", "equipment"],
@@ -84,6 +130,7 @@ export const seedInspection: InspectionReport = {
       url: plumbingPhotoUrl,
       label: "Water heater installation",
       systemId: "plumbing",
+      slotId: "water-heater",
       location: "Utility closet",
       capturedAt: now,
       tags: ["plumbing", "water heater"],
@@ -140,6 +187,46 @@ export const seedInspection: InspectionReport = {
       reviewState: "edited",
       model: "assistive-draft-local",
       generatedAt: now
+    }
+  ],
+  fieldSuggestions: [],
+  permitCandidates: [
+    {
+      id: "permit-roof-demo",
+      type: "roof",
+      title: "Reroof permit candidate",
+      permitNumber: "BRV-ROOF-2017-01492",
+      issuedDate: "2017-05-12",
+      finalDate: "2017-06-02",
+      contractor: "Inspector verify with permit source",
+      sourceId: "brevard-permits",
+      sourceUrl: "https://www.brevardfl.gov/PlanningAndDevelopment/BuildingPermits/PermitSearch",
+      confidence: "medium",
+      status: "candidate",
+      notes: "Demo candidate for inspector review. Select only after matching against the official permit record.",
+      importFields: {
+        roofPermitDate: "2017-06-02",
+        roofCoveringYear: "2017",
+        roofAge: "9"
+      }
+    },
+    {
+      id: "permit-hvac-demo",
+      type: "hvac",
+      title: "HVAC changeout permit candidate",
+      permitNumber: "BRV-HVAC-2021-00621",
+      issuedDate: "2021-03-18",
+      finalDate: "2021-04-06",
+      contractor: "Inspector verify with permit source",
+      sourceId: "brevard-permits",
+      sourceUrl: "https://www.brevardfl.gov/PlanningAndDevelopment/BuildingPermits/PermitSearch",
+      confidence: "low",
+      status: "candidate",
+      notes: "Possible HVAC documentation. Do not import until the address and permit scope match.",
+      importFields: {
+        hvacUpdated: "2021-04-06",
+        hvacAge: "5"
+      }
     }
   ]
 };

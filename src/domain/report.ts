@@ -1,4 +1,5 @@
 import type { InspectionReport, ReportReadiness, StatePack } from "./types";
+import { labelInspectionType } from "./workflow";
 
 export function buildReportSummary(
   inspection: InspectionReport,
@@ -9,6 +10,9 @@ export function buildReportSummary(
 
   return [
     `${inspection.property.address}, ${inspection.property.city}, ${inspection.property.state}`,
+    `Client: ${inspection.request.clientName || "Not populated"} / Insured: ${inspection.request.insuredName || "Not populated"}`,
+    `Booking: ${labelInspectionType(inspection.request.inspectionType)} / ${inspection.request.price || "No price"} / ${inspection.request.paymentStatus.replace("_", " ")}`,
+    `Appointment: ${inspection.request.appointmentStart || "Not scheduled"}`,
     `Inspection date: ${inspection.inspectionDate || "Not set"}`,
     `Owner: ${inspection.property.ownerName || "Not populated"}`,
     `County / parcel: ${inspection.property.county || "Not populated"} / ${inspection.property.parcelId || "Not populated"}`,
@@ -19,6 +23,7 @@ export function buildReportSummary(
     `Completion: ${readiness.completionPercent}%`,
     `Findings approved: ${readiness.approvedFindings}`,
     `AI suggestions reviewed: ${reviewedSuggestions}/${inspection.aiSuggestions.length}`,
+    `Field suggestions pending: ${readiness.unreviewedFieldSuggestions}`,
     inspection.signedAt
       ? `Inspector signoff: ${inspection.signatureName || inspection.inspector.name} at ${formatDateTime(inspection.signedAt)}`
       : "Inspector signoff: Pending",
@@ -86,6 +91,45 @@ export function buildPrintableReportHtml(
     )
     .join("");
 
+  const intakeRows = [
+    ["Client", inspection.request.clientName],
+    ["Insured", inspection.request.insuredName],
+    ["Phone", inspection.request.phone],
+    ["Email", inspection.request.email],
+    ["Inspection type", labelInspectionType(inspection.request.inspectionType)],
+    ["Price", inspection.request.price],
+    ["Payment", inspection.request.paymentStatus.replace("_", " ")],
+    ["Appointment", inspection.request.appointmentStart]
+  ]
+    .map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(value || "Not populated")}</td></tr>`)
+    .join("");
+
+  const selectedPermitRows = inspection.permitCandidates
+    .filter((permit) => permit.status === "selected")
+    .map(
+      (permit) => `
+        <tr>
+          <td>${escapeHtml(permit.type)}</td>
+          <td>${escapeHtml(permit.permitNumber || "No permit number")}</td>
+          <td>${escapeHtml(permit.issuedDate || "Unknown")}</td>
+          <td>${escapeHtml(permit.finalDate || "Unknown")}</td>
+          <td>${escapeHtml(permit.notes)}</td>
+        </tr>
+      `
+    )
+    .join("");
+
+  const officialFieldRows = Object.entries(inspection.officialFields)
+    .map(
+      ([key, value]) => `
+        <tr>
+          <td>${escapeHtml(key.replace(/([A-Z])/g, " $1"))}</td>
+          <td>${escapeHtml(value || "Blank")}</td>
+        </tr>
+      `
+    )
+    .join("");
+
   return `
     <!doctype html>
     <html>
@@ -120,6 +164,10 @@ export function buildPrintableReportHtml(
           <p class="status">${readiness.ready ? "Ready for inspector final export" : "Inspector review required before final export"}</p>
         </header>
         <section>
+          <h2>Booking Intake</h2>
+          <table><tbody>${intakeRows}</tbody></table>
+        </section>
+        <section>
           <h2>Findings</h2>
           ${findings || "<p>No approved findings yet.</p>"}
         </section>
@@ -148,6 +196,17 @@ export function buildPrintableReportHtml(
               ${sourceRows || "<tr><td colspan=\"4\">No public-record research has been run.</td></tr>"}
             </tbody>
           </table>
+        </section>
+        <section>
+          <h2>Selected Permits</h2>
+          <table>
+            <thead><tr><th>Type</th><th>Permit #</th><th>Issued</th><th>Final</th><th>Notes</th></tr></thead>
+            <tbody>${selectedPermitRows || "<tr><td colspan=\"5\">No permits selected yet.</td></tr>"}</tbody>
+          </table>
+        </section>
+        <section>
+          <h2>Official Form Fields</h2>
+          <table><tbody>${officialFieldRows}</tbody></table>
         </section>
         <section>
           <h2>Compliance Notes</h2>

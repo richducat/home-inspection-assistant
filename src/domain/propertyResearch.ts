@@ -1,5 +1,6 @@
 import type {
   InspectionReport,
+  PermitCandidate,
   PropertyProfile,
   PropertyResearchPacket,
   PropertyResearchSource,
@@ -161,6 +162,7 @@ export async function researchProperty(inspection: InspectionReport): Promise<Pr
         updateSource(source, "skipped", "Enter a property address before running public-record research.")
       ),
       suggestions,
+      permitCandidates: [],
       notes: ["Property address is required before public-record research can run."]
     };
   }
@@ -264,6 +266,7 @@ export async function researchProperty(inspection: InspectionReport): Promise<Pr
     resolvedCounty,
     sources,
     suggestions,
+    permitCandidates: buildPermitCandidates(property, query, resolvedCounty, sources),
     notes
   });
 
@@ -301,6 +304,7 @@ export function applyResearchSuggestions(
     ...inspection,
     property,
     researchPacket: packet,
+    permitCandidates: mergePermitCandidates(inspection.permitCandidates, packet.permitCandidates),
     status: inspection.status === "finalized" ? "in_review" : inspection.status,
     signedAt: inspection.status === "finalized" ? undefined : inspection.signedAt,
     exportedAt: inspection.status === "finalized" ? undefined : inspection.exportedAt
@@ -327,6 +331,7 @@ function buildPacket({
   resolvedCounty,
   sources,
   suggestions,
+  permitCandidates,
   notes
 }: {
   query: string;
@@ -335,6 +340,7 @@ function buildPacket({
   resolvedCounty: string;
   sources: PropertyResearchSource[];
   suggestions: PropertyResearchSuggestion[];
+  permitCandidates: PermitCandidate[];
   notes: string[];
 }): PropertyResearchPacket {
   const verifiedCount = sources.filter((source) => source.status === "verified").length;
@@ -351,8 +357,73 @@ function buildPacket({
     county: resolvedCounty || undefined,
     sources,
     suggestions,
+    permitCandidates,
     notes
   };
+}
+
+function buildPermitCandidates(
+  property: PropertyProfile,
+  query: string,
+  county: string,
+  sources: PropertyResearchSource[]
+): PermitCandidate[] {
+  const permitSource = sources.find((source) => source.id === "brevard-permits") ?? {
+    id: "manual-permit-search",
+    url: "https://www.google.com/search?q=property+permit+search",
+    detail: "Manual permit search"
+  };
+  const likelyBrevard = isLikelyBrevard(property, county);
+  const sourceUrl = likelyBrevard
+    ? `${permitSource.url}?address=${encodeURIComponent(query)}`
+    : `https://www.google.com/search?q=${encodeURIComponent(`${query} building permit search`)}`;
+  const baseNote = likelyBrevard
+    ? "Open the county permit source, match address/parcel, then select or edit the matching permit before importing."
+    : "Jurisdiction API was not available in-browser. Use this search task to pull permit data into the report after manual verification.";
+
+  return [
+    buildPermitTask("roof", "Roof/reroof permit review", sourceUrl, permitSource.id, baseNote),
+    buildPermitTask("hvac", "HVAC changeout permit review", sourceUrl, permitSource.id, baseNote),
+    buildPermitTask("electrical", "Electrical permit review", sourceUrl, permitSource.id, baseNote),
+    buildPermitTask("plumbing", "Plumbing permit review", sourceUrl, permitSource.id, baseNote)
+  ];
+}
+
+function buildPermitTask(
+  type: PermitCandidate["type"],
+  title: string,
+  sourceUrl: string,
+  sourceId: string,
+  notes: string
+): PermitCandidate {
+  return {
+    id: `permit-${type}-${Date.now()}`,
+    type,
+    title,
+    permitNumber: "",
+    issuedDate: "",
+    finalDate: "",
+    contractor: "",
+    sourceId,
+    sourceUrl,
+    confidence: "low",
+    status: "candidate",
+    notes
+  };
+}
+
+function mergePermitCandidates(
+  existing: PermitCandidate[] | undefined,
+  incoming: PermitCandidate[] | undefined
+): PermitCandidate[] {
+  const candidates = [...(existing ?? [])];
+  for (const permit of incoming ?? []) {
+    const duplicate = candidates.some((candidate) => candidate.type === permit.type && candidate.sourceUrl === permit.sourceUrl);
+    if (!duplicate) {
+      candidates.push(permit);
+    }
+  }
+  return candidates;
 }
 
 async function lookupCensus(query: string): Promise<CensusMatch | undefined> {

@@ -1,4 +1,12 @@
-import type { AiSuggestion, ImageScanMetrics, InspectionSystem, PhotoAnalysis, PhotoEvidence } from "./types";
+import type {
+  AiSuggestion,
+  FieldSuggestion,
+  ImageScanMetrics,
+  InspectionSystem,
+  OfficialFormFields,
+  PhotoAnalysis,
+  PhotoEvidence
+} from "./types";
 
 type IssuePreset = Pick<
   PhotoAnalysis,
@@ -134,6 +142,70 @@ export function createSuggestionFromAnalysis(
     model: analysis.model,
     generatedAt: analysis.scannedAt
   };
+}
+
+export function createFieldSuggestionsFromAnalysis(
+  analysis: PhotoAnalysis,
+  photo: PhotoEvidence
+): FieldSuggestion[] {
+  const fields = getSystemFieldSuggestions(photo.systemId, analysis);
+  return fields.map((field) => ({
+    id: `field-${analysis.id}-${field.fieldId}`,
+    fieldId: field.fieldId,
+    label: field.label,
+    value: field.value,
+    source: "image_scan",
+    confidence: analysis.confidence,
+    reviewState: "needs_review",
+    createdAt: analysis.scannedAt,
+    sourceId: analysis.id,
+    photoIds: [photo.id]
+  }));
+}
+
+function getSystemFieldSuggestions(
+  systemId: string,
+  analysis: PhotoAnalysis
+): Array<{ fieldId: keyof OfficialFormFields; label: string; value: string }> {
+  if (systemId === "roof") {
+    return [
+      { fieldId: "roofCondition", label: "Roof condition", value: analysis.detectedIssue },
+      { fieldId: "roofRemainingLife", label: "Roof remaining useful life", value: "Inspector verify from roof photos" }
+    ];
+  }
+
+  if (systemId === "electrical") {
+    return [
+      { fieldId: "electricalMainType", label: "Electrical main type", value: "Circuit breaker" },
+      { fieldId: "electricalCondition", label: "Electrical condition", value: electricalConditionValue(analysis) },
+      { fieldId: "panelBrand", label: "Panel brand", value: "Inspector verify from panel label" }
+    ];
+  }
+
+  if (systemId === "hvac") {
+    return [
+      { fieldId: "hvacCondition", label: "HVAC condition", value: analysis.detectedIssue },
+      { fieldId: "hvacAge", label: "HVAC age", value: "Inspector verify from data plate" },
+      { fieldId: "hvacLastService", label: "HVAC last service", value: "Inspector verify" }
+    ];
+  }
+
+  if (systemId === "plumbing") {
+    return [
+      { fieldId: "plumbingCondition", label: "Plumbing condition", value: analysis.detectedIssue },
+      { fieldId: "visibleLeaks", label: "Visible leaks", value: analysis.severity === "safety" ? "Inspector verify" : "None visible in selected photo" },
+      { fieldId: "waterHeaterAge", label: "Water heater age", value: "Inspector verify from data plate" }
+    ];
+  }
+
+  return [];
+}
+
+function electricalConditionValue(analysis: PhotoAnalysis): string {
+  if (analysis.severity === "safety") {
+    return "Unsatisfactory - safety review required";
+  }
+  return "Inspector verify";
 }
 
 async function extractImageMetrics(src: string): Promise<ImageScanMetrics> {

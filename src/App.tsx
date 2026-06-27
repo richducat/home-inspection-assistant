@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import {
   AlertTriangle,
+  CalendarDays,
   Check,
   CheckCircle2,
   ClipboardList,
@@ -12,6 +13,7 @@ import {
   FileCheck2,
   Home,
   ImagePlus,
+  Mail,
   MapPin,
   PenLine,
   Plus,
@@ -25,13 +27,22 @@ import {
 } from "lucide-react";
 import { statePacks } from "./domain/statePacks";
 import { seedInspection } from "./domain/seed";
-import { analyzePhotoEvidence, createSuggestionFromAnalysis } from "./domain/imageAnalysis";
+import {
+  analyzePhotoEvidence,
+  createFieldSuggestionsFromAnalysis,
+  createSuggestionFromAnalysis
+} from "./domain/imageAnalysis";
 import type {
   AiSuggestion,
+  FieldSuggestion,
   Finding,
   InspectionReport,
   InspectionSystem,
+  InspectionType,
+  OfficialFormFields,
+  PaymentStatus,
   PhotoEvidence,
+  PermitCandidate,
   PropertyProfile,
   Severity
 } from "./domain/types";
@@ -55,12 +66,55 @@ import {
   type AddressCandidate,
   type AddressSuggestion
 } from "./domain/addressAutocomplete";
+import {
+  applyFieldSuggestion,
+  applyPermitCandidate,
+  buildCalendarEventUrl,
+  buildCalendarIcs,
+  buildReportEmailHref,
+  buildReviewRequestHref,
+  createManualPermitCandidate,
+  defaultInspectionRequest,
+  defaultOfficialFields,
+  labelInspectionType,
+  parseCalendarInspectionText,
+  updateFieldSuggestionState
+} from "./domain/workflow";
 
-const STORAGE_KEY = "home-inspection-assistant:v2";
+const STORAGE_KEY = "home-inspection-assistant:v3";
 
 type NavTarget = "workspace" | "photos" | "reports" | "compliance";
 type InspectionField = "inspectionDate" | "scope" | "signatureName";
 const coreAddressFields = new Set(["address", "city", "state", "postalCode"]);
+
+type PhotoSlot = {
+  id: string;
+  systemId: string;
+  label: string;
+  formUse: string;
+  required: boolean;
+};
+
+const photoSlots: PhotoSlot[] = [
+  { id: "roof-covering", systemId: "roof", label: "Roof covering / front elevation", formUse: "4-point + wind", required: true },
+  { id: "roof-underlayment", systemId: "roof", label: "Roof permit / covering detail", formUse: "wind", required: true },
+  { id: "electrical-panel", systemId: "electrical", label: "Main electrical panel", formUse: "4-point", required: true },
+  { id: "electrical-label", systemId: "electrical", label: "Panel label / amperage", formUse: "4-point", required: true },
+  { id: "hvac-equipment", systemId: "hvac", label: "HVAC equipment data plate", formUse: "4-point", required: true },
+  { id: "water-heater", systemId: "plumbing", label: "Water heater install / data plate", formUse: "4-point", required: true },
+  { id: "plumbing-fixtures", systemId: "plumbing", label: "Visible plumbing fixtures", formUse: "4-point", required: true },
+  { id: "opening-protection", systemId: "exterior", label: "Opening protection evidence", formUse: "wind", required: true }
+];
+
+const inspectionTypeOptions: InspectionType[] = [
+  "insurance-combo",
+  "four-point",
+  "wind-mitigation",
+  "roof-certification",
+  "full-home"
+];
+
+const paymentStatusOptions: PaymentStatus[] = ["unpaid", "deposit_paid", "paid", "invoiced", "waived"];
 
 const severityLabels: Record<Severity, string> = {
   maintenance: "Maintenance",
@@ -79,9 +133,11 @@ const blankFinding = {
 export function App() {
   const [inspection, setInspection] = useState<InspectionReport>(() => loadSavedInspection());
   const [activeSystemId, setActiveSystemId] = useState("roof");
+  const [activePhotoSlotId, setActivePhotoSlotId] = useState(photoSlots[0]?.id ?? "");
   const [selectedPhotoId, setSelectedPhotoId] = useState(inspection.photos[0]?.id ?? "");
   const [selectedPackId, setSelectedPackId] = useState(inspection.statePackId);
   const [findingDraft, setFindingDraft] = useState(blankFinding);
+  const [calendarImportText, setCalendarImportText] = useState("");
   const [reportOpen, setReportOpen] = useState(false);
   const [complianceOpen, setComplianceOpen] = useState(false);
   const [activeNav, setActiveNav] = useState<NavTarget>("workspace");
@@ -107,8 +163,12 @@ export function App() {
   const displayedPhotos = activePhotos.length ? activePhotos : inspection.photos;
   const selectedPhoto = displayedPhotos.find((photo) => photo.id === selectedPhotoId) ?? displayedPhotos[0];
   const activeSuggestions = inspection.aiSuggestions.filter((suggestion) => suggestion.systemId === activeSystem.id);
+  const activeFieldSuggestions = inspection.fieldSuggestions.filter((suggestion) =>
+    selectedPhoto?.id ? suggestion.photoIds?.includes(selectedPhoto.id) || suggestion.reviewState === "needs_review" : true
+  );
   const activeFindings = inspection.findings.filter((finding) => finding.systemId === activeSystem.id);
   const reportSummary = buildReportSummary(inspection, statePack, readiness);
+  const activePhotoSlot = photoSlots.find((slot) => slot.id === activePhotoSlotId) ?? photoSlots[0];
 
   useEffect(() => {
     const payload = JSON.stringify(inspection);
@@ -132,6 +192,7 @@ export function App() {
       })
     }));
     setActiveSystemId(pack.systems[0]?.id ?? "roof");
+    setActivePhotoSlotId(photoSlots.find((slot) => slot.systemId === pack.systems[0]?.id)?.id ?? photoSlots[0]?.id ?? "");
     setSelectedPhotoId(inspection.photos[0]?.id ?? "");
   }
 
@@ -156,8 +217,22 @@ export function App() {
 
   function handleSelectSystem(systemId: string) {
     setActiveSystemId(systemId);
+    setActivePhotoSlotId(photoSlots.find((slot) => slot.systemId === systemId)?.id ?? "");
     const nextSystemPhoto = inspection.photos.find((photo) => photo.systemId === systemId);
     setSelectedPhotoId(nextSystemPhoto?.id ?? inspection.photos[0]?.id ?? "");
+  }
+
+  function handleSelectPhotoSlot(slotId: string) {
+    const slot = photoSlots.find((candidate) => candidate.id === slotId);
+    if (!slot) {
+      return;
+    }
+
+    setActivePhotoSlotId(slot.id);
+    setActiveSystemId(slot.systemId);
+    const slottedPhoto = inspection.photos.find((photo) => photo.slotId === slot.id);
+    const systemPhoto = inspection.photos.find((photo) => photo.systemId === slot.systemId);
+    setSelectedPhotoId(slottedPhoto?.id ?? systemPhoto?.id ?? inspection.photos[0]?.id ?? "");
   }
 
   async function handleAddPhoto(event: React.ChangeEvent<HTMLInputElement>) {
@@ -167,14 +242,16 @@ export function App() {
     }
 
     const dataUrl = await readFileAsDataUrl(file);
+    const slot = activePhotoSlot;
     const nextPhoto: PhotoEvidence = {
       id: `photo-${Date.now()}`,
       url: dataUrl,
-      label: file.name.replace(/\.[^.]+$/, ""),
-      systemId: activeSystem.id,
+      label: slot?.label || file.name.replace(/\.[^.]+$/, ""),
+      systemId: slot?.systemId || activeSystem.id,
+      slotId: slot?.id,
       location: "Field capture",
       capturedAt: new Date().toISOString(),
-      tags: [activeSystem.id, "uploaded"],
+      tags: [slot?.systemId || activeSystem.id, slot?.formUse || "uploaded", "uploaded"],
       uploaded: true
     };
 
@@ -197,6 +274,7 @@ export function App() {
       const system = statePack.systems.find((candidate) => candidate.id === photo.systemId) ?? activeSystem;
       const analysis = await analyzePhotoEvidence(photo, system);
       const suggestion = createSuggestionFromAnalysis(analysis, photo);
+      const fieldSuggestions = createFieldSuggestionsFromAnalysis(analysis, photo);
 
       setInspection((current) => ({
         ...current,
@@ -206,7 +284,8 @@ export function App() {
         photos: current.photos.map((candidate) =>
           candidate.id === photo.id ? { ...candidate, analysis } : candidate
         ),
-        aiSuggestions: [suggestion, ...current.aiSuggestions]
+        aiSuggestions: [suggestion, ...current.aiSuggestions],
+        fieldSuggestions: [...fieldSuggestions, ...current.fieldSuggestions]
       }));
     } catch {
       setScanError("Photo scan could not read this image. Try another image or re-upload it.");
@@ -224,6 +303,108 @@ export function App() {
     setInspection((current) =>
       updateSuggestionState(current, suggestion.id, action === "edit" ? "edited" : "rejected")
     );
+  }
+
+  function handleFieldSuggestionAction(suggestion: FieldSuggestion, action: "approve" | "edit" | "reject") {
+    if (action === "approve") {
+      setInspection((current) => applyFieldSuggestion(current, suggestion.id));
+      return;
+    }
+
+    setInspection((current) =>
+      updateFieldSuggestionState(current, suggestion.id, action === "edit" ? "edited" : "rejected")
+    );
+  }
+
+  function handleRequestFieldChange(field: keyof InspectionReport["request"], value: string) {
+    setInspection((current) => ({
+      ...current,
+      request: {
+        ...current.request,
+        [field]: value
+      },
+      inspectionDate: field === "appointmentStart" && value ? value.slice(0, 10) : current.inspectionDate,
+      property: field === "insuredName" && !current.property.ownerName ? { ...current.property, ownerName: value } : current.property,
+      status: current.status === "finalized" ? "in_review" : current.status,
+      signedAt: current.status === "finalized" ? undefined : current.signedAt,
+      exportedAt: current.status === "finalized" ? undefined : current.exportedAt
+    }));
+  }
+
+  function handleOfficialFieldChange(field: keyof OfficialFormFields, value: string) {
+    setInspection((current) => ({
+      ...current,
+      officialFields: {
+        ...current.officialFields,
+        [field]: value
+      },
+      status: current.status === "finalized" ? "in_review" : current.status,
+      signedAt: current.status === "finalized" ? undefined : current.signedAt,
+      exportedAt: current.status === "finalized" ? undefined : current.exportedAt
+    }));
+  }
+
+  function handleImportCalendarText() {
+    setInspection((current) => parseCalendarInspectionText(calendarImportText, current));
+    setCalendarImportText("");
+  }
+
+  function handleDownloadCalendarInvite() {
+    const ics = buildCalendarIcs(inspection);
+    const blob = new Blob([ics], { type: "text/calendar" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${inspection.property.address || "inspection"}-calendar.ics`
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function handlePermitChange(permitId: string, field: keyof PermitCandidate, value: string) {
+    setInspection((current) => ({
+      ...current,
+      permitCandidates: current.permitCandidates.map((permit) =>
+        permit.id === permitId ? { ...permit, [field]: value } : permit
+      ),
+      status: current.status === "finalized" ? "in_review" : current.status,
+      signedAt: current.status === "finalized" ? undefined : current.signedAt,
+      exportedAt: current.status === "finalized" ? undefined : current.exportedAt
+    }));
+  }
+
+  function handleAddPermit(type: PermitCandidate["type"]) {
+    setInspection((current) => ({
+      ...current,
+      permitCandidates: [createManualPermitCandidate(type), ...current.permitCandidates]
+    }));
+  }
+
+  function handleSelectPermit(permitId: string) {
+    setInspection((current) => applyPermitCandidate(current, permitId));
+  }
+
+  function handleAssignPhotoToSlot(photoId: string, slotId: string) {
+    const slot = photoSlots.find((candidate) => candidate.id === slotId);
+    if (!slot) {
+      return;
+    }
+
+    setInspection((current) => ({
+      ...current,
+      photos: current.photos.map((photo) =>
+        photo.id === photoId
+          ? {
+              ...photo,
+              slotId: slot.id,
+              systemId: slot.systemId,
+              tags: Array.from(new Set([...photo.tags, slot.systemId, slot.formUse]))
+            }
+          : photo
+      )
+    }));
   }
 
   function handleToggleCheckpoint(checkpoint: string) {
@@ -461,6 +642,7 @@ export function App() {
           .join(", "),
         sources: buildPropertyResearchLinks(inspection.property),
         suggestions: [],
+        permitCandidates: [],
         notes: ["Public-record lookup failed in the browser. Use the official source links for manual verification."]
       };
       setInspection((current) => ({ ...current, researchPacket: failedPacket }));
@@ -506,12 +688,28 @@ export function App() {
         />
         <section className="edit-band" id="inspection-workspace" aria-label="Inspection setup">
           <div className="setup-stack">
+            <IntakePanel
+              inspection={inspection}
+              calendarImportText={calendarImportText}
+              calendarEventUrl={buildCalendarEventUrl(inspection)}
+              onRequestFieldChange={handleRequestFieldChange}
+              onCalendarImportTextChange={setCalendarImportText}
+              onImportCalendarText={handleImportCalendarText}
+              onDownloadCalendarInvite={handleDownloadCalendarInvite}
+            />
             <PropertyResearchPanel
               inspection={inspection}
               researching={researchingProperty}
               statusText={propertyResearchStatus}
               onResearch={handleResearchProperty}
             />
+            <PermitReviewPanel
+              permits={inspection.permitCandidates}
+              onPermitChange={handlePermitChange}
+              onAddPermit={handleAddPermit}
+              onSelectPermit={handleSelectPermit}
+            />
+            <OfficialFieldsPanel fields={inspection.officialFields} onFieldChange={handleOfficialFieldChange} />
             <ProfileEditor
               inspectionDate={inspection.inspectionDate}
               scope={inspection.scope}
@@ -535,10 +733,15 @@ export function App() {
           <PhotoWorkspace
             systemLabel={activeSystem.label}
             photos={displayedPhotos}
+            allPhotos={inspection.photos}
             selectedPhoto={selectedPhoto}
+            photoSlots={photoSlots}
+            activeSlotId={activePhotoSlotId}
             onSelectPhoto={setSelectedPhotoId}
+            onSelectPhotoSlot={handleSelectPhotoSlot}
             onAddPhoto={handleAddPhoto}
             onUpdatePhoto={handlePhotoChange}
+            onAssignPhotoToSlot={handleAssignPhotoToSlot}
             onAnalyzePhoto={handleAnalyzePhoto}
             onGenerateDraft={handleGenerateDraft}
             scanningPhotoId={scanningPhotoId}
@@ -551,11 +754,13 @@ export function App() {
             signedAt={inspection.signedAt}
             signatureName={inspection.signatureName ?? ""}
             suggestions={activeSuggestions}
+            fieldSuggestions={activeFieldSuggestions}
             findings={activeFindings}
             findingDraft={findingDraft}
             setFindingDraft={setFindingDraft}
             reportSummary={reportSummary}
             onSuggestionAction={handleSuggestionAction}
+            onFieldSuggestionAction={handleFieldSuggestionAction}
             onAddFinding={handleAddFinding}
             onDeleteFinding={handleDeleteFinding}
             onSignatureNameChange={(value) => handleInspectionFieldChange("signatureName", value)}
@@ -577,6 +782,8 @@ export function App() {
           onDownloadFourPoint={() => handleDownloadOfficialForm("four-point")}
           onDownloadWindMitigation={() => handleDownloadOfficialForm("wind-mitigation")}
           officialFormStatus={officialFormStatus}
+          reportEmailHref={buildReportEmailHref(inspection)}
+          reviewRequestHref={buildReviewRequestHref(inspection)}
         />
       )}
 
@@ -736,6 +943,150 @@ function Header({
   );
 }
 
+function IntakePanel({
+  inspection,
+  calendarImportText,
+  calendarEventUrl,
+  onRequestFieldChange,
+  onCalendarImportTextChange,
+  onImportCalendarText,
+  onDownloadCalendarInvite
+}: {
+  inspection: InspectionReport;
+  calendarImportText: string;
+  calendarEventUrl: string;
+  onRequestFieldChange: (field: keyof InspectionReport["request"], value: string) => void;
+  onCalendarImportTextChange: (value: string) => void;
+  onImportCalendarText: () => void;
+  onDownloadCalendarInvite: () => void;
+}) {
+  const request = inspection.request;
+  return (
+    <section className="intake-panel" aria-label="Booking intake and calendar">
+      <div className="research-header">
+        <div>
+          <span className="panel-kicker">Booking intake</span>
+          <h2>Website form + Google Calendar</h2>
+        </div>
+        <div className="button-pair">
+          <a className="ghost-button anchor-button" href={calendarEventUrl} target="_blank" rel="noreferrer">
+            <CalendarDays size={15} />
+            Add to Google Calendar
+          </a>
+          <button className="ghost-button" type="button" onClick={onDownloadCalendarInvite}>
+            <FileDown size={15} />
+            Download ICS
+          </button>
+        </div>
+      </div>
+
+      <div className="intake-grid">
+        <label>
+          Client name
+          <input
+            value={request.clientName}
+            onChange={(event) => onRequestFieldChange("clientName", event.target.value)}
+          />
+        </label>
+        <label>
+          Insured / policyholder
+          <input
+            value={request.insuredName}
+            onChange={(event) => onRequestFieldChange("insuredName", event.target.value)}
+          />
+        </label>
+        <label>
+          Phone
+          <input value={request.phone} onChange={(event) => onRequestFieldChange("phone", event.target.value)} />
+        </label>
+        <label>
+          Email
+          <input
+            type="email"
+            value={request.email}
+            onChange={(event) => onRequestFieldChange("email", event.target.value)}
+          />
+        </label>
+        <label>
+          Inspection type
+          <select
+            value={request.inspectionType}
+            onChange={(event) => onRequestFieldChange("inspectionType", event.target.value)}
+          >
+            {inspectionTypeOptions.map((option) => (
+              <option key={option} value={option}>
+                {labelInspectionType(option)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Price
+          <input value={request.price} onChange={(event) => onRequestFieldChange("price", event.target.value)} />
+        </label>
+        <label>
+          Payment
+          <select
+            value={request.paymentStatus}
+            onChange={(event) => onRequestFieldChange("paymentStatus", event.target.value)}
+          >
+            {paymentStatusOptions.map((option) => (
+              <option key={option} value={option}>
+                {option.replace("_", " ")}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Source
+          <select value={request.source} onChange={(event) => onRequestFieldChange("source", event.target.value)}>
+            <option value="website">Website</option>
+            <option value="google_calendar">Google Calendar</option>
+            <option value="phone">Phone</option>
+            <option value="manual">Manual</option>
+          </select>
+        </label>
+        <label>
+          Appointment start
+          <input
+            type="datetime-local"
+            value={request.appointmentStart}
+            onChange={(event) => onRequestFieldChange("appointmentStart", event.target.value)}
+          />
+        </label>
+        <label>
+          Appointment end
+          <input
+            type="datetime-local"
+            value={request.appointmentEnd}
+            onChange={(event) => onRequestFieldChange("appointmentEnd", event.target.value)}
+          />
+        </label>
+        <label className="wide-field">
+          Booking notes
+          <textarea value={request.notes} onChange={(event) => onRequestFieldChange("notes", event.target.value)} />
+        </label>
+        <label className="wide-field">
+          Paste Google Calendar event text
+          <textarea
+            placeholder="Client: Beth York&#10;Email: beth@example.com&#10;Inspection type: 4-point + wind&#10;Address: 742 Palmetto Ridge Dr&#10;City State Zip: Viera FL 32940"
+            value={calendarImportText}
+            onChange={(event) => onCalendarImportTextChange(event.target.value)}
+          />
+        </label>
+      </div>
+
+      <div className="intake-footer">
+        <button className="primary-button" type="button" disabled={!calendarImportText.trim()} onClick={onImportCalendarText}>
+          <ClipboardList size={15} />
+          Import pasted calendar event
+        </button>
+        <span>Client-entered data pre-fills report headers, calendar details, and email handoff.</span>
+      </div>
+    </section>
+  );
+}
+
 function PropertyResearchPanel({
   inspection,
   researching,
@@ -841,6 +1192,182 @@ function PropertyResearchPanel({
           ))}
         </ul>
       ) : null}
+    </section>
+  );
+}
+
+function PermitReviewPanel({
+  permits,
+  onPermitChange,
+  onAddPermit,
+  onSelectPermit
+}: {
+  permits: PermitCandidate[];
+  onPermitChange: (permitId: string, field: keyof PermitCandidate, value: string) => void;
+  onAddPermit: (type: PermitCandidate["type"]) => void;
+  onSelectPermit: (permitId: string) => void;
+}) {
+  const selectedCount = permits.filter((permit) => permit.status === "selected").length;
+  return (
+    <section className="permit-panel" aria-label="Permit review">
+      <div className="research-header">
+        <div>
+          <span className="panel-kicker">Permit history</span>
+          <h2>Review candidates before import</h2>
+        </div>
+        <div className="button-pair">
+          <button className="ghost-button" type="button" onClick={() => onAddPermit("roof")}>
+            <Plus size={15} />
+            Roof permit
+          </button>
+          <button className="ghost-button" type="button" onClick={() => onAddPermit("hvac")}>
+            <Plus size={15} />
+            HVAC permit
+          </button>
+        </div>
+      </div>
+      <div className="permit-summary">
+        <span>{permits.length} candidate{permits.length === 1 ? "" : "s"}</span>
+        <span>{selectedCount} selected for official forms</span>
+      </div>
+      <div className="permit-list">
+        {permits.length === 0 && <p className="empty-state">Run public-record research or add a permit manually.</p>}
+        {permits.map((permit) => (
+          <article className={permit.status === "selected" ? "permit-card selected" : "permit-card"} key={permit.id}>
+            <div className="permit-card-header">
+              <div>
+                <strong>{permit.title}</strong>
+                <span>{permit.type} · {permit.confidence} confidence · {permit.status}</span>
+              </div>
+              {permit.sourceUrl ? (
+                <a className="source-mini-link" href={permit.sourceUrl} target="_blank" rel="noreferrer">
+                  Source <ExternalLink size={13} />
+                </a>
+              ) : null}
+            </div>
+            <div className="permit-edit-grid">
+              <label>
+                Permit #
+                <input
+                  value={permit.permitNumber}
+                  onChange={(event) => onPermitChange(permit.id, "permitNumber", event.target.value)}
+                />
+              </label>
+              <label>
+                Issued
+                <input
+                  type="date"
+                  value={permit.issuedDate}
+                  onChange={(event) => onPermitChange(permit.id, "issuedDate", event.target.value)}
+                />
+              </label>
+              <label>
+                Final
+                <input
+                  type="date"
+                  value={permit.finalDate}
+                  onChange={(event) => onPermitChange(permit.id, "finalDate", event.target.value)}
+                />
+              </label>
+              <label>
+                Contractor
+                <input
+                  value={permit.contractor}
+                  onChange={(event) => onPermitChange(permit.id, "contractor", event.target.value)}
+                />
+              </label>
+            </div>
+            <textarea
+              aria-label={`${permit.title} notes`}
+              value={permit.notes}
+              onChange={(event) => onPermitChange(permit.id, "notes", event.target.value)}
+            />
+            <button className="primary-button" type="button" onClick={() => onSelectPermit(permit.id)}>
+              <Check size={15} />
+              {permit.status === "selected" ? "Selected" : "Select + import fields"}
+            </button>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function OfficialFieldsPanel({
+  fields,
+  onFieldChange
+}: {
+  fields: OfficialFormFields;
+  onFieldChange: (field: keyof OfficialFormFields, value: string) => void;
+}) {
+  const sections: Array<{ title: string; fields: Array<[keyof OfficialFormFields, string]> }> = [
+    {
+      title: "Carrier / header",
+      fields: [
+        ["insuranceCompany", "Insurance company"],
+        ["policyNumber", "Policy #"],
+        ["stories", "Stories"],
+        ["workPhone", "Work phone"]
+      ]
+    },
+    {
+      title: "Roof / wind",
+      fields: [
+        ["roofCovering", "Roof covering"],
+        ["roofCoveringYear", "Covering year"],
+        ["roofAge", "Roof age"],
+        ["roofPermitDate", "Permit date"],
+        ["roofRemainingLife", "Remaining useful life"],
+        ["roofCondition", "Roof condition"],
+        ["roofDeckAttachmentNote", "Deck attachment note"],
+        ["openingProtectionNote", "Opening protection"]
+      ]
+    },
+    {
+      title: "4-point systems",
+      fields: [
+        ["electricalMainType", "Electrical main type"],
+        ["electricalAmps", "Amps"],
+        ["panelBrand", "Panel brand"],
+        ["panelAge", "Panel age"],
+        ["electricalCondition", "Electrical condition"],
+        ["hvacLastService", "HVAC last service"],
+        ["hvacAge", "HVAC age"],
+        ["hvacUpdated", "HVAC updated"],
+        ["hvacCondition", "HVAC condition"],
+        ["plumbingMaterial", "Plumbing material"],
+        ["visibleLeaks", "Visible leaks"],
+        ["waterHeaterLocation", "Water heater location"],
+        ["waterHeaterAge", "Water heater age"],
+        ["plumbingCondition", "Plumbing condition"]
+      ]
+    }
+  ];
+
+  return (
+    <section className="official-fields-panel" aria-label="Official form fields">
+      <div className="research-header">
+        <div>
+          <span className="panel-kicker">Official forms</span>
+          <h2>Reviewed field values</h2>
+        </div>
+        <span className="review-chip edited">Inspector editable</span>
+      </div>
+      <div className="official-field-sections">
+        {sections.map((section) => (
+          <fieldset key={section.title}>
+            <legend>{section.title}</legend>
+            <div className="official-field-grid">
+              {section.fields.map(([field, label]) => (
+                <label key={field}>
+                  {label}
+                  <input value={fields[field]} onChange={(event) => onFieldChange(field, event.target.value)} />
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        ))}
+      </div>
     </section>
   );
 }
@@ -1210,10 +1737,15 @@ function SystemChecklist({
 function PhotoWorkspace({
   systemLabel,
   photos,
+  allPhotos,
   selectedPhoto,
+  photoSlots,
+  activeSlotId,
   onSelectPhoto,
+  onSelectPhotoSlot,
   onAddPhoto,
   onUpdatePhoto,
+  onAssignPhotoToSlot,
   onAnalyzePhoto,
   onGenerateDraft,
   scanningPhotoId,
@@ -1221,16 +1753,22 @@ function PhotoWorkspace({
 }: {
   systemLabel: string;
   photos: PhotoEvidence[];
+  allPhotos: PhotoEvidence[];
   selectedPhoto?: PhotoEvidence;
+  photoSlots: PhotoSlot[];
+  activeSlotId: string;
   onSelectPhoto: (photoId: string) => void;
+  onSelectPhotoSlot: (slotId: string) => void;
   onAddPhoto: (event: React.ChangeEvent<HTMLInputElement>) => void;
   onUpdatePhoto: (photoId: string, patch: Pick<PhotoEvidence, "label" | "location">) => void;
+  onAssignPhotoToSlot: (photoId: string, slotId: string) => void;
   onAnalyzePhoto: () => void;
   onGenerateDraft: () => void;
   scanningPhotoId: string;
   scanError: string;
 }) {
   const selectedPhotoIsScanning = Boolean(selectedPhoto && scanningPhotoId === selectedPhoto.id);
+  const activeSlot = photoSlots.find((slot) => slot.id === activeSlotId);
 
   return (
     <section className="panel photo-panel" id="photo-evidence-panel">
@@ -1259,6 +1797,24 @@ function PhotoWorkspace({
             <input type="file" accept="image/*" capture="environment" onChange={onAddPhoto} />
           </label>
         </div>
+      </div>
+
+      <div className="photo-slot-strip" aria-label="Required report photo slots">
+        {photoSlots.map((slot) => {
+          const assignedPhoto = allPhotos.find((photo) => photo.slotId === slot.id);
+          const active = slot.id === activeSlotId;
+          return (
+            <button
+              className={active ? "photo-slot active" : assignedPhoto ? "photo-slot complete" : "photo-slot"}
+              key={slot.id}
+              type="button"
+              onClick={() => onSelectPhotoSlot(slot.id)}
+            >
+              <span>{slot.label}</span>
+              <small>{assignedPhoto ? "photo assigned" : `${slot.formUse} required`}</small>
+            </button>
+          );
+        })}
       </div>
 
       {selectedPhoto && (
@@ -1290,6 +1846,16 @@ function PhotoWorkspace({
                 <span key={tag}>{tag}</span>
               ))}
             </div>
+            {activeSlot && selectedPhoto.slotId !== activeSlot.id && (
+              <button
+                className="ghost-button assign-slot-button"
+                type="button"
+                onClick={() => onAssignPhotoToSlot(selectedPhoto.id, activeSlot.id)}
+              >
+                <Check size={15} />
+                Use this photo for {activeSlot.label}
+              </button>
+            )}
             {selectedPhoto.analysis ? (
               <div className="scan-result" aria-label="Image scan result">
                 <div className="scan-result-header">
@@ -1356,11 +1922,13 @@ function ReviewPanel({
   signedAt,
   signatureName,
   suggestions,
+  fieldSuggestions,
   findings,
   findingDraft,
   setFindingDraft,
   reportSummary,
   onSuggestionAction,
+  onFieldSuggestionAction,
   onAddFinding,
   onDeleteFinding,
   onSignatureNameChange,
@@ -1372,11 +1940,13 @@ function ReviewPanel({
   signedAt?: string;
   signatureName: string;
   suggestions: AiSuggestion[];
+  fieldSuggestions: FieldSuggestion[];
   findings: InspectionReport["findings"];
   findingDraft: typeof blankFinding;
   setFindingDraft: Dispatch<SetStateAction<typeof blankFinding>>;
   reportSummary: string;
   onSuggestionAction: (suggestion: AiSuggestion, action: "approve" | "edit" | "reject") => void;
+  onFieldSuggestionAction: (suggestion: FieldSuggestion, action: "approve" | "edit" | "reject") => void;
   onAddFinding: () => void;
   onDeleteFinding: (findingId: string) => void;
   onSignatureNameChange: (value: string) => void;
@@ -1398,7 +1968,11 @@ function ReviewPanel({
       <div className="readiness-box">
         <div>
           <strong>{readiness.ready ? "Export unlocked" : "Blocked before final export"}</strong>
-          <span>{readiness.unreviewedSuggestions} AI suggestions still need review</span>
+          <span>
+            {readiness.unreviewedSuggestions} AI draft{readiness.unreviewedSuggestions === 1 ? "" : "s"} and{" "}
+            {readiness.unreviewedFieldSuggestions} field suggestion
+            {readiness.unreviewedFieldSuggestions === 1 ? "" : "s"} still need review
+          </span>
         </div>
         <div className="readiness-percent">{readiness.completionPercent}%</div>
       </div>
@@ -1498,6 +2072,39 @@ function ReviewPanel({
         ))}
       </div>
 
+      <div className="suggestion-list field-suggestion-list">
+        <h3>Field suggestion queue</h3>
+        {fieldSuggestions.length === 0 && (
+          <p className="empty-state">Scan a photo to create official-form field suggestions.</p>
+        )}
+        {fieldSuggestions.map((suggestion) => (
+          <article className="suggestion-card" key={suggestion.id}>
+            <div className="suggestion-title">
+              <strong>{suggestion.label}</strong>
+              <span>{Math.round(suggestion.confidence * 100)}%</span>
+            </div>
+            <div className="suggestion-source">
+              {suggestion.source.replace("_", " ")} · {suggestion.fieldId}
+            </div>
+            <p>{suggestion.value}</p>
+            <div className="suggestion-footer">
+              <span className={`review-chip ${suggestion.reviewState}`}>{suggestion.reviewState.replace("_", " ")}</span>
+              <div>
+                <button type="button" title="Approve field" onClick={() => onFieldSuggestionAction(suggestion, "approve")}>
+                  <Check size={14} />
+                </button>
+                <button type="button" title="Mark edited" onClick={() => onFieldSuggestionAction(suggestion, "edit")}>
+                  <FileCheck2 size={14} />
+                </button>
+                <button type="button" title="Reject field" onClick={() => onFieldSuggestionAction(suggestion, "reject")}>
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+
       <div className="finding-list">
         <h3>Approved findings</h3>
         {findings.length === 0 && <p className="empty-state">Approve a draft or add an inspector finding.</p>}
@@ -1562,7 +2169,9 @@ function ReportDrawer({
   onDownloadReportHtml,
   onDownloadFourPoint,
   onDownloadWindMitigation,
-  officialFormStatus
+  officialFormStatus,
+  reportEmailHref,
+  reviewRequestHref
 }: {
   inspection: InspectionReport;
   readiness: ReturnType<typeof calculateReportReadiness>;
@@ -1575,6 +2184,8 @@ function ReportDrawer({
   onDownloadFourPoint: () => void;
   onDownloadWindMitigation: () => void;
   officialFormStatus: string;
+  reportEmailHref: string;
+  reviewRequestHref: string;
 }) {
   return (
     <aside className="report-drawer" aria-label="Report preview">
@@ -1592,6 +2203,39 @@ function ReportDrawer({
           {readiness.ready ? "Ready for inspector export" : "Inspector review required before final export"}
         </div>
         <pre className="report-pre">{reportSummary}</pre>
+        <section className="report-section report-facts">
+          <h3>Booking intake</h3>
+          <dl>
+            <div>
+              <dt>Client</dt>
+              <dd>{inspection.request.clientName || "Not set"}</dd>
+            </div>
+            <div>
+              <dt>Insured</dt>
+              <dd>{inspection.request.insuredName || "Not set"}</dd>
+            </div>
+            <div>
+              <dt>Contact</dt>
+              <dd>
+                {inspection.request.phone || "No phone"} · {inspection.request.email || "No email"}
+              </dd>
+            </div>
+            <div>
+              <dt>Type / price</dt>
+              <dd>
+                {labelInspectionType(inspection.request.inspectionType)} · {inspection.request.price || "No price"}
+              </dd>
+            </div>
+            <div>
+              <dt>Appointment</dt>
+              <dd>{inspection.request.appointmentStart || "Not scheduled"}</dd>
+            </div>
+            <div>
+              <dt>Payment</dt>
+              <dd>{inspection.request.paymentStatus.replace("_", " ")}</dd>
+            </div>
+          </dl>
+        </section>
         <section className="report-section report-facts">
           <h3>Inspection details</h3>
           <dl>
@@ -1699,6 +2343,35 @@ function ReportDrawer({
           </div>
         </section>
         <section className="report-section">
+          <h3>Selected permits</h3>
+          {inspection.permitCandidates.filter((permit) => permit.status === "selected").length === 0 && (
+            <p>No permits selected for import yet.</p>
+          )}
+          {inspection.permitCandidates
+            .filter((permit) => permit.status === "selected")
+            .map((permit) => (
+              <article key={permit.id}>
+                <strong>{permit.title}</strong>
+                <p>
+                  {permit.permitNumber || "No permit number"} · issued {permit.issuedDate || "unknown"} · final{" "}
+                  {permit.finalDate || "unknown"}
+                </p>
+                <p>{permit.notes}</p>
+              </article>
+            ))}
+        </section>
+        <section className="report-section report-facts">
+          <h3>Official form field values</h3>
+          <dl>
+            {Object.entries(inspection.officialFields).map(([key, value]) => (
+              <div key={key}>
+                <dt>{key.replace(/([A-Z])/g, " $1")}</dt>
+                <dd>{value || "Blank"}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+        <section className="report-section">
           <h3>Compliance notes</h3>
           <ul className="compact-list">
             {statePack.disclaimers.map((disclaimer) => (
@@ -1743,6 +2416,14 @@ function ReportDrawer({
           </dl>
         </section>
         <div className="report-actions">
+          <a className="ghost-button anchor-button" href={reportEmailHref}>
+            <Mail size={15} />
+            Email report
+          </a>
+          <a className="ghost-button anchor-button" href={reviewRequestHref}>
+            <Mail size={15} />
+            Review request
+          </a>
           <button className="ghost-button" type="button" onClick={onDownloadJson}>
             <Download size={15} />
             Download record
@@ -1878,7 +2559,21 @@ function normalizeInspection(inspection: InspectionReport): InspectionReport {
 
   return {
     ...cloned,
+    request: {
+      ...defaultInspectionRequest,
+      ...(cloned.request ?? {})
+    },
     property,
+    officialFields: {
+      ...defaultOfficialFields,
+      ...(cloned.officialFields ?? {})
+    },
+    fieldSuggestions: cloned.fieldSuggestions ?? [],
+    permitCandidates: cloned.permitCandidates ?? cloned.researchPacket?.permitCandidates ?? [],
+    photos: (cloned.photos ?? []).map((photo) => ({
+      ...photo,
+      tags: photo.tags ?? []
+    })),
     inspectionDate: cloned.inspectionDate || new Date().toISOString().slice(0, 10),
     scope:
       cloned.scope ||
@@ -1892,6 +2587,10 @@ function createBlankInspection(systems: InspectionSystem[], statePackId: string)
     id: `inspection-${Date.now()}`,
     statePackId,
     status: "draft",
+    request: {
+      ...defaultInspectionRequest,
+      appointmentStart: new Date().toISOString().slice(0, 16)
+    },
     inspectionDate: new Date().toISOString().slice(0, 10),
     scope:
       "General visual home inspection of readily accessible systems and components with photo evidence and inspector review.",
@@ -1918,15 +2617,18 @@ function createBlankInspection(systems: InspectionSystem[], statePackId: string)
       addressScore: undefined
     },
     inspector: {
-      name: "",
-      company: "",
-      license: "",
-      email: ""
+      name: "Beth York",
+      company: "York Home Inspections",
+      license: "FL-HI-REVIEW",
+      email: "inspections@yorkinspections.com"
     },
+    officialFields: { ...defaultOfficialFields },
     systems: systems.map((system) => ({ systemId: system.id, status: "not_started", completedCheckpoints: [] })),
     photos: [],
     findings: [],
     aiSuggestions: [],
+    fieldSuggestions: [],
+    permitCandidates: [],
     signatureName: ""
   };
 }
